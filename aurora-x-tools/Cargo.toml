@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "ax-asm",
+    "ax-emu",
+    "ax-disasm",
+]
+resolver = "2"

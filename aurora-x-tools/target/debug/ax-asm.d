@@ -1,0 +1,1 @@
+C:\Users\hussam\Desktop\AURORA-X\ ISA\aurora-x-tools\target\debug\ax-asm.exe: C:\Users\hussam\Desktop\AURORA-X\ ISA\aurora-x-tools\ax-asm\src\encoder.rs C:\Users\hussam\Desktop\AURORA-X\ ISA\aurora-x-tools\ax-asm\src\main.rs C:\Users\hussam\Desktop\AURORA-X\ ISA\aurora-x-tools\ax-asm\src\parser.rs
