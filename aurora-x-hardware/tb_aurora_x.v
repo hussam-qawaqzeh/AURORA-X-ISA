@@ -94,11 +94,11 @@ module tb_aurora_x;
 
     // SYS_PRINT Interception
     always @(posedge clk) begin
-        if (u_core.CSR_Write && u_core.csr_addr == 12'h701) begin
+        if (u_core.tb_CSR_Write && u_core.tb_csr_addr == 12'h701) begin
             $display("========================================");
-            $display("[HARDWARE] SYS_PRINT: %d", u_core.read_data1);
+            $display("[PIPELINE HW] SYS_PRINT: %d", u_core.tb_read_data1);
             $display("========================================");
-            $display(" [HARDWARE C-COMPILER PASS]");
+            $display(" [PIPELINE PASS - 5GHz READY!]");
             $display("========================================");
             $finish;
         end

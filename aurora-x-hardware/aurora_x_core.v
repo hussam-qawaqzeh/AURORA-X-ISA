@@ -1,189 +1,262 @@
 module aurora_x_core (
-    input  wire        clk,
-    input  wire        rst_n,
-    
-    // Instruction Memory Interface
-    output reg  [63:0] pc,
-    input  wire [31:0] inst,
-    
-    // Data Memory Interface
-    output wire [63:0] data_addr,
-    output wire [63:0] data_write_val,
-    input  wire [63:0] data_read_val,
-    output wire        data_we,
-    output wire        data_re,
-
-    // Test Interface (CSR 0x700)
-    output reg  [63:0] test_status
+    input clk,
+    input rst_n,
+    output reg [63:0] pc,
+    input  [31:0] inst,
+    output [63:0] data_addr,
+    output [63:0] data_write_val,
+    input  [63:0] data_read_val,
+    output data_we,
+    output data_re,
+    output [63:0] test_status
 );
 
-    // Wires
-    wire [7:0]  opcode;
-    wire [4:0]  rd, rs1, rs2;
+    // Pipeline Registers
+    // IF/ID
+    reg [63:0] IF_ID_pc;
+    reg [31:0] IF_ID_inst;
+
+    // ID/EX
+    reg [63:0] ID_EX_pc;
+    reg [63:0] ID_EX_read_data1;
+    reg [63:0] ID_EX_read_data2;
+    reg [63:0] ID_EX_imm14_sext;
+    reg [63:0] ID_EX_imm19_sext;
+    reg [4:0]  ID_EX_rs1;
+    reg [4:0]  ID_EX_rs2;
+    reg [4:0]  ID_EX_rd;
+    reg [11:0] ID_EX_csr_addr;
+    
+    // Control signals
+    reg ID_EX_RegWrite, ID_EX_ALUSrc_B, ID_EX_MemRead, ID_EX_MemWrite;
+    reg ID_EX_Branch, ID_EX_Jump, ID_EX_CSR_Write, ID_EX_CSR_Read;
+    reg [2:0] ID_EX_ALU_Op;
+    reg [1:0] ID_EX_MemtoReg;
+
+    // EX/MEM
+    reg [63:0] EX_MEM_alu_result;
+    reg [63:0] EX_MEM_write_data;
+    reg [4:0]  EX_MEM_rd;
+    reg EX_MEM_RegWrite, EX_MEM_MemRead, EX_MEM_MemWrite;
+    reg [1:0] EX_MEM_MemtoReg;
+
+    // MEM/WB
+    reg [63:0] MEM_WB_alu_result;
+    reg [63:0] MEM_WB_read_data;
+    reg [4:0]  MEM_WB_rd;
+    reg MEM_WB_RegWrite;
+    reg [1:0] MEM_WB_MemtoReg;
+
+    // ------------------------------------------------------------------------
+    // STAGE 1: INSTRUCTION FETCH (IF)
+    // ------------------------------------------------------------------------
+    wire Stall;
+    wire Flush;
+    wire [63:0] pc_plus_4 = pc + 4;
+    wire [63:0] pc_next;
+    
+    wire Branch_Taken_EX;
+    wire [63:0] Branch_Target_EX;
+
+    assign pc_next = Branch_Taken_EX ? Branch_Target_EX : pc_plus_4;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            pc <= 0;
+            IF_ID_pc <= 0;
+            IF_ID_inst <= 32'd0;
+        end else begin
+            if (!Stall) begin
+                pc <= pc_next;
+                IF_ID_pc <= pc;
+                IF_ID_inst <= inst;
+            end
+            if (Flush) begin
+                IF_ID_inst <= 32'd0;
+            end
+        end
+    end
+
+    // ------------------------------------------------------------------------
+    // STAGE 2: INSTRUCTION DECODE (ID)
+    // ------------------------------------------------------------------------
+    wire [4:0] rs1, rs2, rd;
     wire [13:0] imm14;
     wire [18:0] imm19;
     wire [11:0] csr_addr;
-    wire [8:0]  funct9;
-
-    wire [63:0] imm14_sext, imm19_sext;
-    wire RegWrite, ALUSrc_B, MemRead, MemWrite, Branch, Jump, CSR_Write, CSR_Read;
-    wire [2:0] ALU_Op;
-    wire [1:0] MemtoReg;
-
-    wire VectorOp, VectorRegWrite, VectorMemRead, VectorMemWrite;
-    wire [2:0] VALU_Op;
-
-    wire [63:0] read_data1, read_data2;
-    wire [63:0] alu_result;
-    wire alu_zero;
-
-    // Decoder
-    decoder u_decoder (
-        .inst(inst),
-        .opcode(opcode),
-        .rd(rd),
+    wire [8:0] funct9;
+    
+    wire RegWrite_D, ALUSrc_B_D, MemRead_D, MemWrite_D, Branch_D, Jump_D, CSR_Write_D, CSR_Read_D;
+    wire [2:0] ALU_Op_D;
+    wire [1:0] MemtoReg_D;
+    
+    decoder u_dec (
+        .inst(IF_ID_inst),
         .rs1(rs1),
         .rs2(rs2),
+        .rd(rd),
         .imm14(imm14),
         .imm19(imm19),
         .csr_addr(csr_addr),
         .funct9(funct9),
-        .imm14_sext(imm14_sext),
-        .imm19_sext(imm19_sext),
-        .RegWrite(RegWrite),
-        .ALUSrc_B(ALUSrc_B),
-        .ALU_Op(ALU_Op),
-        .MemRead(MemRead),
-        .MemWrite(MemWrite),
-        .Branch(Branch),
-        .Jump(Jump),
-        .CSR_Write(CSR_Write),
-        .CSR_Read(CSR_Read),
-        .MemtoReg(MemtoReg),
-        .VectorOp(VectorOp),
-        .VectorRegWrite(VectorRegWrite),
-        .VectorMemRead(VectorMemRead),
-        .VectorMemWrite(VectorMemWrite),
-        .VALU_Op(VALU_Op)
+        .RegWrite(RegWrite_D),
+        .ALUSrc_B(ALUSrc_B_D),
+        .MemRead(MemRead_D),
+        .MemWrite(MemWrite_D),
+        .Branch(Branch_D),
+        .Jump(Jump_D),
+        .CSR_Write(CSR_Write_D),
+        .CSR_Read(CSR_Read_D),
+        .MemtoReg(MemtoReg_D),
+        .ALU_Op(ALU_Op_D)
     );
 
-    // Register File
-    reg  [63:0] reg_write_data;
-    register_file u_regfile (
+    wire [63:0] read_data1_D, read_data2_D;
+    wire [63:0] write_data_W;
+
+    register_file u_rf (
         .clk(clk),
-        .we(RegWrite),
+        .we(MEM_WB_RegWrite),
         .rs1(rs1),
         .rs2(rs2),
-        .rd(rd),
-        .write_data(reg_write_data),
-        .read_data1(read_data1),
-        .read_data2(read_data2)
+        .rd(MEM_WB_rd),
+        .write_data(write_data_W),
+        .read_data1(read_data1_D),
+        .read_data2(read_data2_D)
     );
 
-    // ALU
-    wire [63:0] alu_in_b = (ALUSrc_B) ? imm14_sext : read_data2;
-    alu u_alu (
-        .A(read_data1),
-        .B(alu_in_b),
-        .ALU_Op(ALU_Op),
-        .Result(alu_result),
-        .Zero(alu_zero)
+    wire [63:0] imm14_sext_D = {{50{imm14[13]}}, imm14};
+    wire [63:0] imm19_sext_D = {{45{imm19[18]}}, imm19};
+
+    hazard_unit u_hu (
+        .rs1_D(rs1),
+        .rs2_D(rs2),
+        .rd_E(ID_EX_rd),
+        .MemRead_E(ID_EX_MemRead),
+        .Branch_Taken(Branch_Taken_EX),
+        .Stall(Stall),
+        .Flush(Flush)
     );
-
-    // Vector Register File and ALU
-    wire [2047:0] vector_read_data1, vector_read_data2, vector_read_data_vd;
-    wire [2047:0] vector_alu_result;
-    wire [2047:0] vector_write_data = VectorMemRead ? {1984'd0, data_read_val} : vector_alu_result;
-
-    vector_register_file u_vrf (
-        .clk(clk),
-        .we(VectorRegWrite),
-        .rs1(rs1),
-        .rs2(rs2),
-        .rd(rd),
-        .write_data(vector_write_data),
-        .read_data1(vector_read_data1),
-        .read_data2(vector_read_data2),
-        .read_data_vd(vector_read_data_vd)
-    );
-
-    vector_alu u_valu (
-        .A(vector_read_data1),
-        .B(vector_read_data2),
-        .C(vector_read_data_vd),
-        .VALU_Op(VALU_Op),
-        .Result(vector_alu_result)
-    );
-
-    wire is_exret = (opcode == 8'h45);
-    wire alignment_fault = (data_we_raw || data_re_raw) && (data_addr[2:0] != 3'b000);
-
-    // Memory Interface
-    wire data_we_raw = MemWrite || VectorMemWrite;
-    wire data_re_raw = MemRead || VectorMemRead;
-    
-    assign data_addr      = alu_result;
-    assign data_write_val = VectorMemWrite ? vector_read_data2[63:0] : read_data2;
-    // Prevent memory access if there is an alignment fault
-    assign data_we        = data_we_raw && !alignment_fault;
-    assign data_re        = data_re_raw && !alignment_fault;
-
-    // CSR Registers
-    reg [63:0] csr_trap_handler;
-    reg [63:0] csr_epc;
-    reg [63:0] csr_trap_cause;
-
-    // Writeback
-    always @(*) begin
-        case (MemtoReg)
-            2'b00: reg_write_data = alu_result;
-            2'b01: reg_write_data = data_read_val;
-            2'b10: reg_write_data = pc + 4;
-            2'b11: begin // CSR Read
-                if (csr_addr == 12'h020) reg_write_data = csr_trap_handler;
-                else if (csr_addr == 12'h021) reg_write_data = csr_epc;
-                else if (csr_addr == 12'h008) reg_write_data = csr_trap_cause;
-                else reg_write_data = 64'd0;
-            end
-        endcase
-    end
-
-    // PC Logic
-    wire [63:0] next_pc;
-    wire take_branch = Branch & alu_zero;
-    wire [63:0] branch_offset = { {48{imm14[13]}}, imm14, 2'b00 };
-    wire [63:0] jump_offset   = { {43{imm19[18]}}, imm19, 2'b00 };
-
-    wire [63:0] pc_plus_4   = pc + 4;
-    wire [63:0] pc_branch   = pc + branch_offset;
-    wire [63:0] pc_jump     = pc + jump_offset;
-
-    assign next_pc = alignment_fault ? csr_trap_handler :
-                     is_exret        ? csr_epc :
-                     Jump            ? pc_jump : 
-                     (take_branch    ? pc_branch : pc_plus_4);
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            pc <= 64'd0;
-            test_status <= 64'd0;
-            csr_trap_handler <= 64'd0;
-            csr_epc <= 64'd0;
-            csr_trap_cause <= 64'd0;
+            ID_EX_RegWrite <= 0; ID_EX_MemRead <= 0; ID_EX_MemWrite <= 0; ID_EX_Branch <= 0; ID_EX_Jump <= 0;
+            ID_EX_CSR_Write <= 0; ID_EX_CSR_Read <= 0;
         end else begin
-            pc <= next_pc;
-
-            // Handle Exceptions and CSRs
-            if (alignment_fault) begin
-                csr_epc <= pc; // Save offending PC
-                csr_trap_cause <= 64'd2; // Alignment Fault Cause
-            end else if (CSR_Write) begin
-                if (csr_addr == 12'h700) test_status <= read_data1;
-                else if (csr_addr == 12'h020) csr_trap_handler <= read_data1;
-                else if (csr_addr == 12'h021) csr_epc <= read_data1;
-                else if (csr_addr == 12'h008) csr_trap_cause <= read_data1;
+            if (Stall || Flush) begin
+                ID_EX_RegWrite <= 0; ID_EX_MemRead <= 0; ID_EX_MemWrite <= 0; ID_EX_Branch <= 0; ID_EX_Jump <= 0;
+                ID_EX_CSR_Write <= 0; ID_EX_CSR_Read <= 0;
+            end else begin
+                ID_EX_pc <= IF_ID_pc;
+                ID_EX_read_data1 <= read_data1_D;
+                ID_EX_read_data2 <= read_data2_D;
+                ID_EX_imm14_sext <= imm14_sext_D;
+                ID_EX_imm19_sext <= imm19_sext_D;
+                ID_EX_rs1 <= rs1;
+                ID_EX_rs2 <= rs2;
+                ID_EX_rd <= rd;
+                ID_EX_csr_addr <= csr_addr;
+                ID_EX_RegWrite <= RegWrite_D;
+                ID_EX_ALUSrc_B <= ALUSrc_B_D;
+                ID_EX_MemRead <= MemRead_D;
+                ID_EX_MemWrite <= MemWrite_D;
+                ID_EX_Branch <= Branch_D;
+                ID_EX_Jump <= Jump_D;
+                ID_EX_ALU_Op <= ALU_Op_D;
+                ID_EX_MemtoReg <= MemtoReg_D;
+                ID_EX_CSR_Write <= CSR_Write_D;
             end
         end
     end
+
+    // ------------------------------------------------------------------------
+    // STAGE 3: EXECUTION (EX)
+    // ------------------------------------------------------------------------
+    wire [1:0] ForwardA, ForwardB;
+    wire [63:0] alu_in1 = (ForwardA == 2'b10) ? EX_MEM_alu_result :
+                          (ForwardA == 2'b01) ? write_data_W :
+                          ID_EX_read_data1;
+    
+    wire [63:0] forwarded_read_data2 = (ForwardB == 2'b10) ? EX_MEM_alu_result :
+                                       (ForwardB == 2'b01) ? write_data_W :
+                                       ID_EX_read_data2;
+
+    wire [63:0] alu_in2 = ID_EX_ALUSrc_B ? ID_EX_imm14_sext : forwarded_read_data2;
+    wire [63:0] alu_result_E;
+    wire alu_zero_E;
+
+    alu u_alu (
+        .A(alu_in1),
+        .B(alu_in2),
+        .ALU_Op(ID_EX_ALU_Op),
+        .Result(alu_result_E),
+        .Zero(alu_zero_E)
+    );
+
+    forwarding_unit u_fu (
+        .rs1_E(ID_EX_rs1),
+        .rs2_E(ID_EX_rs2),
+        .rd_M(EX_MEM_rd),
+        .RegWrite_M(EX_MEM_RegWrite),
+        .rd_W(MEM_WB_rd),
+        .RegWrite_W(MEM_WB_RegWrite),
+        .ForwardA(ForwardA),
+        .ForwardB(ForwardB)
+    );
+
+    assign Branch_Taken_EX = (ID_EX_Branch && alu_zero_E) || ID_EX_Jump;
+    assign Branch_Target_EX = ID_EX_Jump ? (ID_EX_pc + (ID_EX_imm19_sext << 2)) : (ID_EX_pc + (ID_EX_imm14_sext << 2));
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            EX_MEM_RegWrite <= 0; EX_MEM_MemRead <= 0; EX_MEM_MemWrite <= 0;
+        end else begin
+            EX_MEM_alu_result <= alu_result_E;
+            EX_MEM_write_data <= forwarded_read_data2;
+            EX_MEM_rd <= ID_EX_rd;
+            EX_MEM_RegWrite <= ID_EX_RegWrite;
+            EX_MEM_MemRead <= ID_EX_MemRead;
+            EX_MEM_MemWrite <= ID_EX_MemWrite;
+            EX_MEM_MemtoReg <= ID_EX_MemtoReg;
+        end
+    end
+
+    // ------------------------------------------------------------------------
+    // STAGE 4: MEMORY (MEM)
+    // ------------------------------------------------------------------------
+    assign data_addr = EX_MEM_alu_result;
+    assign data_write_val = EX_MEM_write_data;
+    assign data_we = EX_MEM_MemWrite;
+    assign data_re = EX_MEM_MemRead;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            MEM_WB_RegWrite <= 0;
+        end else begin
+            MEM_WB_alu_result <= EX_MEM_alu_result;
+            MEM_WB_read_data <= data_read_val;
+            MEM_WB_rd <= EX_MEM_rd;
+            MEM_WB_RegWrite <= EX_MEM_RegWrite;
+            MEM_WB_MemtoReg <= EX_MEM_MemtoReg;
+        end
+    end
+
+    // ------------------------------------------------------------------------
+    // STAGE 5: WRITE BACK (WB)
+    // ------------------------------------------------------------------------
+    assign write_data_W = (MEM_WB_MemtoReg == 2'b01) ? MEM_WB_read_data : MEM_WB_alu_result;
+
+    // Test Status Logic
+    reg [63:0] test_status_reg = 0;
+    always @(posedge clk) begin
+        if (ID_EX_CSR_Write && ID_EX_csr_addr == 12'h700)
+            test_status_reg <= alu_in1;
+    end
+    assign test_status = test_status_reg;
+    
+    // Exports for Testbench
+    wire tb_CSR_Write = ID_EX_CSR_Write;
+    wire [11:0] tb_csr_addr = ID_EX_csr_addr;
+    wire [63:0] tb_read_data1 = alu_in1;
 
 endmodule
