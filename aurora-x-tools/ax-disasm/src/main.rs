@@ -50,14 +50,16 @@ fn disassemble(inst: u32, _pc: usize) -> String {
     let dec = decode(inst);
     match dec.opcode {
         0x01 => {
-            if dec.funct9 == 0x00 {
-                format!("ADD.X R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2)
-            } else if dec.funct9 == 0x01 {
-                format!("SUB.X R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2)
-            } else {
-                format!(".UNKNOWN_INT_OP")
-            }
-        }
+            let funct9 = inst & 0x1FF;
+            if funct9 == 0 { format!("ADD.X R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2) }
+            else { format!("SUB.X R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2) }
+        },
+        0x02 => format!("AND R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2),
+        0x03 => format!("OR R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2),
+        0x04 => format!("XOR R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2),
+        0x05 => format!("SHL R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2),
+        0x06 => format!("SHR R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2),
+        0x09 => format!("ADDI R{}, R{}, {}", dec.rd, dec.rs1, dec.imm14),
         0x21 => {
             format!("LOAD.X R{}, [R{}{}]", dec.rd, dec.rs1, if dec.imm14 != 0 { format!("{:+}", dec.imm14) } else { "".to_string() })
         }

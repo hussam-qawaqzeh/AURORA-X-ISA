@@ -16,10 +16,22 @@ impl Reg {
 }
 
 pub enum Instruction {
-    /// R-Type: ADD.X rd, rs1, rs2
-    AddX { rd: Reg, rs1: Reg, rs2: Reg },
-    /// R-Type: SUB.X rd, rs1, rs2
-    SubX { rd: Reg, rs1: Reg, rs2: Reg },
+    /// Arithmetic: ADD.X rd, rs1, rs2
+    Add { rd: Reg, rs1: Reg, rs2: Reg },
+    /// Arithmetic: ADDI rd, rs1, imm
+    AddI { rd: Reg, rs1: Reg, imm: i16 },
+    /// Arithmetic: SUB.X rd, rs1, rs2
+    Sub { rd: Reg, rs1: Reg, rs2: Reg },
+    /// Logic: AND rd, rs1, rs2
+    And { rd: Reg, rs1: Reg, rs2: Reg },
+    /// Logic: OR rd, rs1, rs2
+    Or { rd: Reg, rs1: Reg, rs2: Reg },
+    /// Logic: XOR rd, rs1, rs2
+    Xor { rd: Reg, rs1: Reg, rs2: Reg },
+    /// Logic: SHL rd, rs1, rs2
+    Shl { rd: Reg, rs1: Reg, rs2: Reg },
+    /// Logic: SHR rd, rs1, rs2
+    Shr { rd: Reg, rs1: Reg, rs2: Reg },
     /// I-Type: LOAD.X rd, [rs1 + imm]
     LoadX { rd: Reg, rs1: Reg, imm: i16 },
     /// S-Type: STORE.X rs2, [rs1 + imm]
@@ -53,24 +65,6 @@ pub enum Instruction {
 impl Instruction {
     pub fn encode(&self) -> u32 {
         match self {
-            Instruction::AddX { rd, rs1, rs2 } => {
-                let opcode: u32 = 0x01; // Integer Op
-                let funct9: u32 = 0x00; // 64-bit ADD
-                let rd_val = match rd { Reg::R(v) => *v as u32 };
-                let rs1_val = match rs1 { Reg::R(v) => *v as u32 };
-                let rs2_val = match rs2 { Reg::R(v) => *v as u32 };
-                
-                (opcode << 24) | (rd_val << 19) | (rs1_val << 14) | (rs2_val << 9) | funct9
-            }
-            Instruction::SubX { rd, rs1, rs2 } => {
-                let opcode: u32 = 0x01; // Integer Op
-                let funct9: u32 = 0x01; // 64-bit SUB
-                let rd_val = match rd { Reg::R(v) => *v as u32 };
-                let rs1_val = match rs1 { Reg::R(v) => *v as u32 };
-                let rs2_val = match rs2 { Reg::R(v) => *v as u32 };
-                
-                (opcode << 24) | (rd_val << 19) | (rs1_val << 14) | (rs2_val << 9) | funct9
-            }
             Instruction::LoadX { rd, rs1, imm } => {
                 let opcode: u32 = 0x21; // LOAD.X
                 let rd_val = match rd { Reg::R(v) => *v as u32 };
@@ -134,6 +128,54 @@ impl Instruction {
                 let rs2_val = match vs2 { Reg::R(v) => *v as u32 };
                 let imm_val = (*imm as u32) & 0x3FFF;
                 (opcode << 24) | (rs1_val << 19) | (rs2_val << 14) | imm_val
+            }
+            Instruction::Add { rd, rs1, rs2 } => {
+                let opcode: u32 = 0x01; // ADD.X
+                let funct9: u32 = 0x00; // 64-bit add
+                let rd_val = match rd { Reg::R(v) => *v as u32 };
+                let rs1_val = match rs1 { Reg::R(v) => *v as u32 };
+                let rs2_val = match rs2 { Reg::R(v) => *v as u32 };
+                (opcode << 24) | (rd_val << 19) | (rs1_val << 14) | (rs2_val << 9) | funct9
+            }
+            Instruction::AddI { rd, rs1, imm } => {
+                let opcode: u32 = 0x09; // ADDI
+                let rd_val = match rd { Reg::R(v) => *v as u32 };
+                let rs1_val = match rs1 { Reg::R(v) => *v as u32 };
+                let imm_val = (*imm as u32) & 0x3FFF;
+                (opcode << 24) | (rd_val << 19) | (rs1_val << 14) | imm_val
+            }
+            Instruction::Sub { rd, rs1, rs2 } => {
+                let opcode: u32 = 0x01; // SUB.X
+                let funct9: u32 = 0x01; // 64-bit sub
+                let rd_val = match rd { Reg::R(v) => *v as u32 };
+                let rs1_val = match rs1 { Reg::R(v) => *v as u32 };
+                let rs2_val = match rs2 { Reg::R(v) => *v as u32 };
+                (opcode << 24) | (rd_val << 19) | (rs1_val << 14) | (rs2_val << 9) | funct9
+            }
+            Instruction::And { rd, rs1, rs2 } => {
+                let opcode: u32 = 0x02; let funct9: u32 = 0x00;
+                let rd_val = match rd { Reg::R(v) => *v as u32 }; let rs1_val = match rs1 { Reg::R(v) => *v as u32 }; let rs2_val = match rs2 { Reg::R(v) => *v as u32 };
+                (opcode << 24) | (rd_val << 19) | (rs1_val << 14) | (rs2_val << 9) | funct9
+            }
+            Instruction::Or { rd, rs1, rs2 } => {
+                let opcode: u32 = 0x03; let funct9: u32 = 0x00;
+                let rd_val = match rd { Reg::R(v) => *v as u32 }; let rs1_val = match rs1 { Reg::R(v) => *v as u32 }; let rs2_val = match rs2 { Reg::R(v) => *v as u32 };
+                (opcode << 24) | (rd_val << 19) | (rs1_val << 14) | (rs2_val << 9) | funct9
+            }
+            Instruction::Xor { rd, rs1, rs2 } => {
+                let opcode: u32 = 0x04; let funct9: u32 = 0x00;
+                let rd_val = match rd { Reg::R(v) => *v as u32 }; let rs1_val = match rs1 { Reg::R(v) => *v as u32 }; let rs2_val = match rs2 { Reg::R(v) => *v as u32 };
+                (opcode << 24) | (rd_val << 19) | (rs1_val << 14) | (rs2_val << 9) | funct9
+            }
+            Instruction::Shl { rd, rs1, rs2 } => {
+                let opcode: u32 = 0x05; let funct9: u32 = 0x00;
+                let rd_val = match rd { Reg::R(v) => *v as u32 }; let rs1_val = match rs1 { Reg::R(v) => *v as u32 }; let rs2_val = match rs2 { Reg::R(v) => *v as u32 };
+                (opcode << 24) | (rd_val << 19) | (rs1_val << 14) | (rs2_val << 9) | funct9
+            }
+            Instruction::Shr { rd, rs1, rs2 } => {
+                let opcode: u32 = 0x06; let funct9: u32 = 0x00;
+                let rd_val = match rd { Reg::R(v) => *v as u32 }; let rs1_val = match rs1 { Reg::R(v) => *v as u32 }; let rs2_val = match rs2 { Reg::R(v) => *v as u32 };
+                (opcode << 24) | (rd_val << 19) | (rs1_val << 14) | (rs2_val << 9) | funct9
             }
             Instruction::VAdd { vd, vs1, vs2 } => {
                 let opcode: u32 = 0x62; // VADD

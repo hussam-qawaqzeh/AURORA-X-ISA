@@ -19,7 +19,15 @@ pub fn parse_line(line: &str) -> Option<Instruction> {
                 let rd = Reg::parse(parts[1])?;
                 let rs1 = Reg::parse(parts[2])?;
                 let rs2 = Reg::parse(parts[3])?;
-                return Some(Instruction::AddX { rd, rs1, rs2 });
+                return Some(Instruction::Add { rd, rs1, rs2 });
+            }
+        }
+        "ADDI" => {
+            if parts.len() >= 4 {
+                let rd = Reg::parse(parts[1])?;
+                let rs1 = Reg::parse(parts[2])?;
+                let imm = parts[3].parse::<i16>().unwrap_or(0);
+                return Some(Instruction::AddI { rd, rs1, imm });
             }
         }
         "SUB.X" => {
@@ -27,7 +35,37 @@ pub fn parse_line(line: &str) -> Option<Instruction> {
                 let rd = Reg::parse(parts[1])?;
                 let rs1 = Reg::parse(parts[2])?;
                 let rs2 = Reg::parse(parts[3])?;
-                return Some(Instruction::SubX { rd, rs1, rs2 });
+                return Some(Instruction::Sub { rd, rs1, rs2 });
+            }
+        }
+        "AND" => {
+            if parts.len() >= 4 {
+                let rd = Reg::parse(parts[1])?; let rs1 = Reg::parse(parts[2])?; let rs2 = Reg::parse(parts[3])?;
+                return Some(Instruction::And { rd, rs1, rs2 });
+            }
+        }
+        "OR" => {
+            if parts.len() >= 4 {
+                let rd = Reg::parse(parts[1])?; let rs1 = Reg::parse(parts[2])?; let rs2 = Reg::parse(parts[3])?;
+                return Some(Instruction::Or { rd, rs1, rs2 });
+            }
+        }
+        "XOR" => {
+            if parts.len() >= 4 {
+                let rd = Reg::parse(parts[1])?; let rs1 = Reg::parse(parts[2])?; let rs2 = Reg::parse(parts[3])?;
+                return Some(Instruction::Xor { rd, rs1, rs2 });
+            }
+        }
+        "SHL" => {
+            if parts.len() >= 4 {
+                let rd = Reg::parse(parts[1])?; let rs1 = Reg::parse(parts[2])?; let rs2 = Reg::parse(parts[3])?;
+                return Some(Instruction::Shl { rd, rs1, rs2 });
+            }
+        }
+        "SHR" => {
+            if parts.len() >= 4 {
+                let rd = Reg::parse(parts[1])?; let rs1 = Reg::parse(parts[2])?; let rs2 = Reg::parse(parts[3])?;
+                return Some(Instruction::Shr { rd, rs1, rs2 });
             }
         }
         "LOAD.X" => {

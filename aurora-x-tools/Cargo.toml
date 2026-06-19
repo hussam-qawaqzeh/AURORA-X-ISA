@@ -3,5 +3,6 @@ members = [
     "ax-asm",
     "ax-emu",
     "ax-disasm",
+    "ax-cc",
 ]
 resolver = "2"

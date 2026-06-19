@@ -1,0 +1,1 @@
+C:\Users\hussam\Desktop\AURORA-X\ ISA\aurora-x-tools\target\debug\ax-cc.exe: C:\Users\hussam\Desktop\AURORA-X\ ISA\aurora-x-tools\ax-cc\src\codegen.rs C:\Users\hussam\Desktop\AURORA-X\ ISA\aurora-x-tools\ax-cc\src\lexer.rs C:\Users\hussam\Desktop\AURORA-X\ ISA\aurora-x-tools\ax-cc\src\main.rs C:\Users\hussam\Desktop\AURORA-X\ ISA\aurora-x-tools\ax-cc\src\parser.rs
