@@ -1,4 +1,6 @@
-module aurora_x_core (
+module aurora_x_core #(
+    parameter CORE_TYPE = 0 // 0: P-Core, 1: E-Core, 2: AI-Core (with Vector SIMT)
+)(
     input clk,
     input rst_n,
     output reg [63:0] pc,
@@ -201,18 +203,26 @@ module aurora_x_core (
     wire [2047:0] vread_data1_D, vread_data2_D, vread_data_vd_D;
     wire [2047:0] vwrite_data_W;
     
-    vector_register_file u_vrf (
-        .clk(clk),
-        .we(MEM_WB_VectorRegWrite),
-        .rs1(rs1),
-        .rs2(rs2),
-        .rd_write(MEM_WB_rd),
-        .vd_read(rd),
-        .write_data(vwrite_data_W),
-        .read_data1(vread_data1_D),
-        .read_data2(vread_data2_D),
-        .read_data_vd(vread_data_vd_D)
-    );
+    generate
+        if (CORE_TYPE == 2) begin : gen_vrf
+            vector_register_file u_vrf (
+                .clk(clk),
+                .we(MEM_WB_VectorRegWrite),
+                .rs1(rs1),
+                .rs2(rs2),
+                .rd_write(MEM_WB_rd),
+                .vd_read(rd),
+                .write_data(vwrite_data_W),
+                .read_data1(vread_data1_D),
+                .read_data2(vread_data2_D),
+                .read_data_vd(vread_data_vd_D)
+            );
+        end else begin : gen_no_vrf
+            assign vread_data1_D = 2048'd0;
+            assign vread_data2_D = 2048'd0;
+            assign vread_data_vd_D = 2048'd0;
+        end
+    endgenerate
 
     wire [63:0] imm14_sext_D = {{50{imm14[13]}}, imm14};
     wire [63:0] imm19_sext_D = {{45{imm19[18]}}, imm19};
@@ -330,13 +340,19 @@ module aurora_x_core (
     // Vector ALU
     wire [2047:0] valu_in2 = ID_EX_ALUSrc_B ? {1984'd0, ID_EX_imm14_sext} : ID_EX_vread_data2;
     wire [2047:0] valu_result_E;
-    vector_alu u_valu (
-        .A(ID_EX_vread_data1),
-        .B(valu_in2),
-        .C(ID_EX_vread_data_vd),
-        .VALU_Op(ID_EX_VALU_Op),
-        .Result(valu_result_E)
-    );
+    generate
+        if (CORE_TYPE == 2) begin : gen_valu
+            vector_alu u_valu (
+                .A(ID_EX_vread_data1),
+                .B(valu_in2),
+                .C(ID_EX_vread_data_vd),
+                .VALU_Op(ID_EX_VALU_Op),
+                .Result(valu_result_E)
+            );
+        end else begin : gen_no_valu
+            assign valu_result_E = 2048'd0;
+        end
+    endgenerate
 
     forwarding_unit u_fu (
         .rs1_E(ID_EX_rs1),

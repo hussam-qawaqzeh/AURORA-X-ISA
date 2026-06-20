@@ -1,16 +1,14 @@
+`include "aurora_config.vh"
+
 module aurora_x_soc (
     input clk,
     input rst_n,
 
-    // Core 0 Instruction Interface (assuming shared ROM or separate ROMs)
-    output [63:0] c0_pc,
-    input  [31:0] c0_inst,
+    // Instruction Interface for ALL cores
+    output [(`TOTAL_CORES*64)-1:0] cores_pc,
+    input  [(`TOTAL_CORES*32)-1:0] cores_inst,
 
-    // Core 1 Instruction Interface
-    output [63:0] c1_pc,
-    input  [31:0] c1_inst,
-
-    // Main Memory Data Interface (Master from L2)
+    // Main Memory Data Interface (Master from L3/L2)
     output [63:0] mem_addr,
     output [63:0] mem_write_val,
     output mem_we,
@@ -19,88 +17,107 @@ module aurora_x_soc (
     input  mem_ready,
     
     // Core Status
-    output [63:0] c0_test_status,
-    output [63:0] c1_test_status
+    output [(`TOTAL_CORES*64)-1:0] cores_test_status
 );
 
-    // Core 0 Data Interface
-    wire [63:0] c0_data_addr;
-    wire [63:0] c0_data_write_val;
-    wire [63:0] c0_data_read_val;
-    wire c0_data_we;
-    wire c0_data_re;
-    wire c0_data_ready;
-
-    // Core 0 PMU Interface
-    wire c0_pmu_req;
-    wire [63:0] c0_pmu_write_data;
-    
-    // Core 1 PMU Interface
-    wire c1_pmu_req;
-    wire [63:0] c1_pmu_write_data;
-
-    // PMU Generated Clocks
-    wire clk_c0;
-    wire clk_c1;
+    // PMU Interface Arrays
+    wire [`TOTAL_CORES-1:0] pmu_req;
+    wire [(`TOTAL_CORES*64)-1:0] pmu_write_data;
+    wire [`TOTAL_CORES-1:0] clk_cores;
 
     ax_pmu u_pmu (
         .clk(clk),
         .rst_n(rst_n),
-        .c0_pmu_req(c0_pmu_req),
-        .c0_pmu_write_data(c0_pmu_write_data),
-        .c1_pmu_req(c1_pmu_req),
-        .c1_pmu_write_data(c1_pmu_write_data),
-        .clk_c0(clk_c0),
-        .clk_c1(clk_c1)
+        .pmu_req(pmu_req),
+        .pmu_write_data(pmu_write_data),
+        .clk_cores(clk_cores)
     );
 
-    aurora_x_core u_core0 (
-        .clk(clk_c0),
-        .rst_n(rst_n),
-        .pc(c0_pc),
-        .inst(c0_inst),
-        .data_addr(c0_data_addr),
-        .data_write_val(c0_data_write_val),
-        .data_read_val(c0_data_read_val),
-        .data_we(c0_data_we),
-        .data_re(c0_data_re),
-        .data_ready(c0_data_ready),
-        .core_id(4'd0),
-        .test_status(c0_test_status),
-        .pmu_req(c0_pmu_req),
-        .pmu_write_data(c0_pmu_write_data),
-        .snoop_addr(m0_snoop_addr),
-        .snoop_we(m0_snoop_we)
-    );
+    // Data Interface Arrays
+    wire [(`TOTAL_CORES*64)-1:0] core_data_addr;
+    wire [(`TOTAL_CORES*64)-1:0] core_data_write_val;
+    wire [(`TOTAL_CORES*64)-1:0] core_data_read_val;
+    wire [`TOTAL_CORES-1:0] core_data_we;
+    wire [`TOTAL_CORES-1:0] core_data_re;
+    wire [`TOTAL_CORES-1:0] core_data_ready;
 
-    // Core 1 Data Interface
-    wire [63:0] c1_data_addr;
-    wire [63:0] c1_data_write_val;
-    wire [63:0] c1_data_read_val;
-    wire c1_data_we;
-    wire c1_data_re;
-    wire c1_data_ready;
+    // Snoop Interface Arrays
+    wire [(`TOTAL_CORES*64)-1:0] snoop_addr;
+    wire [`TOTAL_CORES-1:0] snoop_we;
 
-    aurora_x_core u_core1 (
-        .clk(clk_c1),
-        .rst_n(rst_n),
-        .pc(c1_pc),
-        .inst(c1_inst),
-        .data_addr(c1_data_addr),
-        .data_write_val(c1_data_write_val),
-        .data_read_val(c1_data_read_val),
-        .data_we(c1_data_we),
-        .data_re(c1_data_re),
-        .data_ready(c1_data_ready),
-        .core_id(4'd1),
-        .test_status(c1_test_status),
-        .pmu_req(c1_pmu_req),
-        .pmu_write_data(c1_pmu_write_data),
-        .snoop_addr(m1_snoop_addr),
-        .snoop_we(m1_snoop_we)
-    );
+    // Instantiate Cores based on Configuration
+    genvar g;
+    generate
+        // P-Cores
+        for (g = 0; g < `NUM_P_CORES; g = g + 1) begin : gen_p_cores
+            aurora_x_core #(.CORE_TYPE(0)) u_core (
+                .clk(clk_cores[g]),
+                .rst_n(rst_n),
+                .pc(cores_pc[(g*64) +: 64]),
+                .inst(cores_inst[(g*32) +: 32]),
+                .data_addr(core_data_addr[(g*64) +: 64]),
+                .data_write_val(core_data_write_val[(g*64) +: 64]),
+                .data_read_val(core_data_read_val[(g*64) +: 64]),
+                .data_we(core_data_we[g]),
+                .data_re(core_data_re[g]),
+                .data_ready(core_data_ready[g]),
+                .core_id(g[3:0]),
+                .test_status(cores_test_status[(g*64) +: 64]),
+                .pmu_req(pmu_req[g]),
+                .pmu_write_data(pmu_write_data[(g*64) +: 64]),
+                .snoop_addr(snoop_addr[(g*64) +: 64]),
+                .snoop_we(snoop_we[g])
+            );
+        end
 
-    // AX-Bus Interface (Slave side)
+        // E-Cores
+        for (g = 0; g < `NUM_E_CORES; g = g + 1) begin : gen_e_cores
+            localparam idx = `NUM_P_CORES + g;
+            aurora_x_core #(.CORE_TYPE(1)) u_core (
+                .clk(clk_cores[idx]),
+                .rst_n(rst_n),
+                .pc(cores_pc[(idx*64) +: 64]),
+                .inst(cores_inst[(idx*32) +: 32]),
+                .data_addr(core_data_addr[(idx*64) +: 64]),
+                .data_write_val(core_data_write_val[(idx*64) +: 64]),
+                .data_read_val(core_data_read_val[(idx*64) +: 64]),
+                .data_we(core_data_we[idx]),
+                .data_re(core_data_re[idx]),
+                .data_ready(core_data_ready[idx]),
+                .core_id(idx[3:0]),
+                .test_status(cores_test_status[(idx*64) +: 64]),
+                .pmu_req(pmu_req[idx]),
+                .pmu_write_data(pmu_write_data[(idx*64) +: 64]),
+                .snoop_addr(snoop_addr[(idx*64) +: 64]),
+                .snoop_we(snoop_we[idx])
+            );
+        end
+
+        // AI-Cores
+        for (g = 0; g < `NUM_AI_CORES; g = g + 1) begin : gen_ai_cores
+            localparam idx = `NUM_P_CORES + `NUM_E_CORES + g;
+            aurora_x_core #(.CORE_TYPE(2)) u_core (
+                .clk(clk_cores[idx]),
+                .rst_n(rst_n),
+                .pc(cores_pc[(idx*64) +: 64]),
+                .inst(cores_inst[(idx*32) +: 32]),
+                .data_addr(core_data_addr[(idx*64) +: 64]),
+                .data_write_val(core_data_write_val[(idx*64) +: 64]),
+                .data_read_val(core_data_read_val[(idx*64) +: 64]),
+                .data_we(core_data_we[idx]),
+                .data_re(core_data_re[idx]),
+                .data_ready(core_data_ready[idx]),
+                .core_id(idx[3:0]),
+                .test_status(cores_test_status[(idx*64) +: 64]),
+                .pmu_req(pmu_req[idx]),
+                .pmu_write_data(pmu_write_data[(idx*64) +: 64]),
+                .snoop_addr(snoop_addr[(idx*64) +: 64]),
+                .snoop_we(snoop_we[idx])
+            );
+        end
+    endgenerate
+
+    // AX-Bus Scalable Interface (Slave side)
     wire [63:0] bus_addr;
     wire [63:0] bus_write_data;
     wire bus_we;
@@ -108,36 +125,21 @@ module aurora_x_soc (
     wire [63:0] bus_read_data;
     wire bus_ready;
 
-    // Snoop signals
-    wire [63:0] m0_snoop_addr;
-    wire m0_snoop_we;
-    wire [63:0] m1_snoop_addr;
-    wire m1_snoop_we;
+    wire [`TOTAL_CORES-1:0] bus_req;
+    assign bus_req = core_data_we | core_data_re;
 
-    ax_bus u_ax_bus (
+    ax_bus_scalable u_ax_bus (
         .clk(clk),
         .rst_n(rst_n),
-        .m0_req(c0_data_we || c0_data_re),
-        .m0_addr(c0_data_addr),
-        .m0_write_data(c0_data_write_val),
-        .m0_we(c0_data_we),
-        .m0_re(c0_data_re),
-        .m0_read_data(c0_data_read_val),
-        .m0_ready(c0_data_ready),
-        
-        .m1_req(c1_data_we || c1_data_re),
-        .m1_addr(c1_data_addr),
-        .m1_write_data(c1_data_write_val),
-        .m1_we(c1_data_we),
-        .m1_re(c1_data_re),
-        .m1_read_data(c1_data_read_val),
-        .m1_ready(c1_data_ready),
-
-        .m0_snoop_addr(m0_snoop_addr),
-        .m0_snoop_we(m0_snoop_we),
-        .m1_snoop_addr(m1_snoop_addr),
-        .m1_snoop_we(m1_snoop_we),
-
+        .m_req(bus_req),
+        .m_addr(core_data_addr),
+        .m_write_data(core_data_write_val),
+        .m_we(core_data_we),
+        .m_re(core_data_re),
+        .m_read_data(core_data_read_val),
+        .m_ready(core_data_ready),
+        .snoop_addr(snoop_addr),
+        .snoop_we(snoop_we),
         .s_addr(bus_addr),
         .s_write_data(bus_write_data),
         .s_we(bus_we),
@@ -146,7 +148,14 @@ module aurora_x_soc (
         .s_ready(bus_ready)
     );
 
-    // L2 Cache
+    // L2 Cache (Shared Middle Tier)
+    wire [63:0] l2_to_l3_addr;
+    wire [63:0] l2_to_l3_write_data;
+    wire l2_to_l3_we;
+    wire l2_to_l3_re;
+    wire [63:0] l3_to_l2_read_data;
+    wire l3_to_l2_ready;
+
     l2_cache u_l2_cache (
         .clk(clk),
         .rst_n(rst_n),
@@ -156,12 +165,41 @@ module aurora_x_soc (
         .bus_re(bus_re),
         .bus_read_data(bus_read_data),
         .bus_ready(bus_ready),
-        .mem_addr(mem_addr),
-        .mem_write_data(mem_write_val),
-        .mem_we(mem_we),
-        .mem_re(mem_re),
-        .mem_read_data(mem_read_val),
-        .mem_ready(mem_ready)
+        .mem_addr(l2_to_l3_addr),
+        .mem_write_data(l2_to_l3_write_data),
+        .mem_we(l2_to_l3_we),
+        .mem_re(l2_to_l3_re),
+        .mem_read_data(l3_to_l2_read_data),
+        .mem_ready(l3_to_l2_ready)
     );
+
+    // L3 Cache (Massive Last Level Cache with 3D V-Cache capabilities)
+    generate
+        if (`ENABLE_L3_CACHE) begin : gen_l3_cache
+            l3_cache u_l3_cache (
+                .clk(clk),
+                .rst_n(rst_n),
+                .bus_addr(l2_to_l3_addr),
+                .bus_write_data(l2_to_l3_write_data),
+                .bus_we(l2_to_l3_we),
+                .bus_re(l2_to_l3_re),
+                .bus_read_data(l3_to_l2_read_data),
+                .bus_ready(l3_to_l2_ready),
+                .mem_addr(mem_addr),
+                .mem_write_data(mem_write_val),
+                .mem_we(mem_we),
+                .mem_re(mem_re),
+                .mem_read_data(mem_read_val),
+                .mem_ready(mem_ready)
+            );
+        end else begin : gen_no_l3_cache
+            assign mem_addr = l2_to_l3_addr;
+            assign mem_write_val = l2_to_l3_write_data;
+            assign mem_we = l2_to_l3_we;
+            assign mem_re = l2_to_l3_re;
+            assign l3_to_l2_read_data = mem_read_val;
+            assign l3_to_l2_ready = mem_ready;
+        end
+    endgenerate
 
 endmodule
