@@ -57,6 +57,7 @@ module tb_aurora_x;
     always #5 clk = ~clk;
 
     // Test Control
+    reg [2047:0] test_hex;
     initial begin
         $dumpfile("aurora_x.vcd");
         $dumpvars(0, tb_aurora_x);
@@ -68,7 +69,11 @@ module tb_aurora_x;
             ram[i] = 64'd0;
         end
 
-        $readmemh("../AURORA-X-Tests/fib.hex", rom);
+        if ($value$plusargs("TEST=%s", test_hex)) begin
+            $readmemh(test_hex, rom);
+        end else begin
+            $readmemh("../AURORA-X-Tests/fib.hex", rom);
+        end
 
         clk = 0;
         rst_n = 0;
@@ -95,18 +100,14 @@ module tb_aurora_x;
     // SYS_PRINT Interception
     always @(posedge clk) begin
         if (u_core.tb_CSR_Write && u_core.tb_csr_addr == 12'h701) begin
-            $display("========================================");
-            $display("[PIPELINE HW] SYS_PRINT: %d", u_core.tb_read_data1);
-            $display("========================================");
-            $display(" [PIPELINE PASS - 5GHz READY!]");
-            $display("========================================");
-            $finish;
+            $display("[SYS_PRINT] %d (0x%016x)", u_core.tb_read_data1, u_core.tb_read_data1);
+            // We no longer finish the simulation here. It finishes via test_status.
         end
     end
 
     // Timeout watchdog
     initial begin
-        #5000;
+        #50000; // Increased timeout for larger tests
         $display("========================================");
         $display(" [HARDWARE TIMEOUT] PC = %x", pc);
         $display("========================================");

@@ -3,7 +3,8 @@ module vector_register_file (
     input  wire          we,
     input  wire [4:0]    rs1,
     input  wire [4:0]    rs2,
-    input  wire [4:0]    rd,
+    input  wire [4:0]    rd_write,
+    input  wire [4:0]    vd_read,
     input  wire [2047:0] write_data,
     output wire [2047:0] read_data1,
     output wire [2047:0] read_data2,
@@ -23,13 +24,14 @@ module vector_register_file (
     // Write Port (Synchronous)
     always @(posedge clk) begin
         if (we) begin
-            vr[rd] <= write_data;
+            vr[rd_write] <= write_data;
         end
     end
 
     // Read Ports (Combinational)
-    assign read_data1 = vr[rs1];
-    assign read_data2 = vr[rs2];
-    assign read_data_vd = vr[rd]; // For VFMA accumulator
+    // Internal forwarding for Write-Before-Read hazard
+    assign read_data1 = (we && rd_write == rs1) ? write_data : vr[rs1];
+    assign read_data2 = (we && rd_write == rs2) ? write_data : vr[rs2];
+    assign read_data_vd = (we && rd_write == vd_read) ? write_data : vr[vd_read]; // For VFMA accumulator
 
 endmodule

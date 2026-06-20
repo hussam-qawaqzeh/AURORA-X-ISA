@@ -29,7 +29,9 @@ module register_file (
 
     // Read Ports (Asynchronous/Combinational)
     // R0 is hardwired to 0
-    assign read_data1 = (rs1 == 5'd0) ? 64'd0 : registers[rs1];
-    assign read_data2 = (rs2 == 5'd0) ? 64'd0 : registers[rs2];
+    // Internal forwarding for Write-Before-Read hazard
+    assign read_data1 = (rs1 == 0) ? 64'd0 : ((we && rd == rs1) ? write_data : registers[rs1]);
+    assign read_data2 = (rs2 == 0) ? 64'd0 : ((we && rd == rs2) ? write_data : registers[rs2]);
+    assign R31_out = registers[31];
 
 endmodule

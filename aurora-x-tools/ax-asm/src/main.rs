@@ -40,13 +40,14 @@ fn main() {
     }
 
     // 1. Write binary file (.bin) for ax-emu
-    let mut file = File::create(output_path).expect("Failed to create binary output file");
+    let bin_path = if output_path.ends_with(".hex") { output_path.replace(".hex", ".bin") } else { output_path.to_string() };
+    let mut file = File::create(&bin_path).expect("Failed to create binary output file");
     for &word in &binary_out {
         file.write_u32::<LittleEndian>(word).expect("Failed to write to file");
     }
 
     // 2. Write hex file (.hex) for Verilog readmemh
-    let hex_path = output_path.replace(".bin", ".hex");
+    let hex_path = if output_path.ends_with(".hex") { output_path.to_string() } else { output_path.replace(".bin", ".hex") };
     let mut hex_file = File::create(&hex_path).unwrap_or_else(|_| File::create(format!("{}.hex", output_path)).unwrap());
     for &word in &binary_out {
         writeln!(hex_file, "{:08X}", word).expect("Failed to write hex file");

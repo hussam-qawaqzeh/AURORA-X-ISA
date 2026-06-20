@@ -26,7 +26,7 @@ pub fn parse_line(line: &str) -> Option<Instruction> {
             if parts.len() >= 4 {
                 let rd = Reg::parse(parts[1])?;
                 let rs1 = Reg::parse(parts[2])?;
-                let imm = parts[3].parse::<i16>().unwrap_or(0);
+                let imm = parse_hex_or_int(parts[3]).unwrap_or(0) as i16;
                 return Some(Instruction::AddI { rd, rs1, imm });
             }
         }
@@ -69,13 +69,15 @@ pub fn parse_line(line: &str) -> Option<Instruction> {
             }
         }
         "LOAD.X" => {
-            // LOAD.X R5, [R6]  or LOAD.X R5, [R6+10]
-            if parts.len() >= 3 {
+            if parts.len() >= 4 {
+                let rd = Reg::parse(parts[1])?;
+                let rs1 = Reg::parse(parts[2])?;
+                let imm = parse_hex_or_int(parts[3]).unwrap_or(0) as i16;
+                return Some(Instruction::LoadX { rd, rs1, imm });
+            } else if parts.len() >= 3 {
                 let rd = Reg::parse(parts[1])?;
                 let mem_op = parts[2..].join("");
                 let mem_op = mem_op.trim_start_matches('[').trim_end_matches(']');
-                
-                // parse R6 or R6+10
                 if let Some(plus_idx) = mem_op.find('+') {
                     let rs1 = Reg::parse(&mem_op[..plus_idx])?;
                     let imm = mem_op[plus_idx+1..].parse::<i16>().unwrap_or(0);
@@ -87,11 +89,15 @@ pub fn parse_line(line: &str) -> Option<Instruction> {
             }
         }
         "STORE.X" => {
-            if parts.len() >= 3 {
+            if parts.len() >= 4 {
+                let rs1 = Reg::parse(parts[1])?; // Base register
+                let rs2 = Reg::parse(parts[2])?; // Data register
+                let imm = parse_hex_or_int(parts[3]).unwrap_or(0) as i16;
+                return Some(Instruction::StoreX { rs2, rs1, imm });
+            } else if parts.len() >= 3 {
                 let rs2 = Reg::parse(parts[1])?; // value to store
                 let mem_op = parts[2..].join("");
                 let mem_op = mem_op.trim_start_matches('[').trim_end_matches(']');
-                
                 if let Some(plus_idx) = mem_op.find('+') {
                     let rs1 = Reg::parse(&mem_op[..plus_idx])?;
                     let imm = mem_op[plus_idx+1..].parse::<i16>().unwrap_or(0);
@@ -102,12 +108,64 @@ pub fn parse_line(line: &str) -> Option<Instruction> {
                 }
             }
         }
-        "BRANCH.X" => {
+        "BNE" | "BRANCH.X" => {
             if parts.len() >= 4 {
-                let rs1 = Reg::parse(parts[1])?;
-                let rs2 = Reg::parse(parts[2])?;
-                let imm = parts[3].parse::<i16>().unwrap_or(0);
-                return Some(Instruction::BranchX { rs1, rs2, imm });
+                let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; let imm = parts[3].parse::<i16>().unwrap_or(0);
+                return Some(Instruction::BranchX { rs1, rs2, imm, btype: 0 }); // 0x40
+            }
+        }
+        "BEQ" => {
+            if parts.len() >= 4 {
+                let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; let imm = parts[3].parse::<i16>().unwrap_or(0);
+                return Some(Instruction::BranchX { rs1, rs2, imm, btype: 1 }); // 0x46
+            }
+        }
+        "BLT" => {
+            if parts.len() >= 4 {
+                let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; let imm = parts[3].parse::<i16>().unwrap_or(0);
+                return Some(Instruction::BranchX { rs1, rs2, imm, btype: 2 }); // 0x47
+            }
+        }
+        "BGE" => {
+            if parts.len() >= 4 {
+                let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; let imm = parts[3].parse::<i16>().unwrap_or(0);
+                return Some(Instruction::BranchX { rs1, rs2, imm, btype: 3 }); // 0x48
+            }
+        }
+        "BLTU" => {
+            if parts.len() >= 4 {
+                let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; let imm = parts[3].parse::<i16>().unwrap_or(0);
+                return Some(Instruction::BranchX { rs1, rs2, imm, btype: 4 }); // 0x49
+            }
+        }
+        "BGEU" => {
+            if parts.len() >= 4 {
+                let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; let imm = parts[3].parse::<i16>().unwrap_or(0);
+                return Some(Instruction::BranchX { rs1, rs2, imm, btype: 5 }); // 0x4A
+            }
+        }
+        "MUL" | "MUL.X" => {
+            if parts.len() >= 4 {
+                let rd = Reg::parse(parts[1])?; let rs1 = Reg::parse(parts[2])?; let rs2 = Reg::parse(parts[3])?;
+                return Some(Instruction::Mul { rd, rs1, rs2 });
+            }
+        }
+        "DIV" | "DIV.X" => {
+            if parts.len() >= 4 {
+                let rd = Reg::parse(parts[1])?; let rs1 = Reg::parse(parts[2])?; let rs2 = Reg::parse(parts[3])?;
+                return Some(Instruction::Div { rd, rs1, rs2 });
+            }
+        }
+        "SLT" => {
+            if parts.len() >= 4 {
+                let rd = Reg::parse(parts[1])?; let rs1 = Reg::parse(parts[2])?; let rs2 = Reg::parse(parts[3])?;
+                return Some(Instruction::Slt { rd, rs1, rs2 });
+            }
+        }
+        "SLTU" => {
+            if parts.len() >= 4 {
+                let rd = Reg::parse(parts[1])?; let rs1 = Reg::parse(parts[2])?; let rs2 = Reg::parse(parts[3])?;
+                return Some(Instruction::Sltu { rd, rs1, rs2 });
             }
         }
         "JUMP.X" => {
@@ -120,14 +178,14 @@ pub fn parse_line(line: &str) -> Option<Instruction> {
         "CSR.READ" => {
             if parts.len() >= 3 {
                 let rd = Reg::parse(parts[1])?;
-                let csr_addr = parse_hex_or_int(parts[2])?;
+                let csr_addr = parse_hex_or_int(parts[2])? as u16;
                 return Some(Instruction::CsrRead { rd, csr_addr });
             }
         }
         "CSR.WRITE" => {
             if parts.len() >= 3 {
                 let rs1 = Reg::parse(parts[1])?;
-                let csr_addr = parse_hex_or_int(parts[2])?;
+                let csr_addr = parse_hex_or_int(parts[2])? as u16;
                 return Some(Instruction::CsrWrite { rs1, csr_addr });
             }
         }
@@ -205,10 +263,14 @@ pub fn parse_line(line: &str) -> Option<Instruction> {
     None
 }
 
-fn parse_hex_or_int(s: &str) -> Option<u16> {
-    if s.starts_with("0x") || s.starts_with("0X") {
-        u16::from_str_radix(&s[2..], 16).ok()
+fn parse_hex_or_int(s: &str) -> Option<i16> {
+    let res = if s.starts_with("0x") || s.starts_with("0X") {
+        i16::from_str_radix(&s[2..], 16).ok()
     } else {
-        s.parse::<u16>().ok()
+        s.parse::<i16>().ok()
+    };
+    if res.is_none() {
+        println!("Failed to parse imm: '{}'", s);
     }
+    res
 }

@@ -4,22 +4,32 @@ module hazard_unit (
     input [4:0] rd_E,
     input MemRead_E,
     input Branch_Taken,
+    input cache_stall,
     
-    output reg Stall,
+    output reg Stall_IF_ID,
+    output reg Stall_Pipeline,
     output reg Flush
 );
     always @(*) begin
-        Stall = 0;
+        Stall_IF_ID = 0;
+        Stall_Pipeline = 0;
         Flush = 0;
         
-        // Load-Use Hazard Detection
-        if (MemRead_E && ((rd_E == rs1_D) || (rd_E == rs2_D))) begin
-            Stall = 1;
-        end
-        
-        // Control Hazard Detection
-        if (Branch_Taken) begin
-            Flush = 1;
+        // Cache Stall (Global Freeze)
+        if (cache_stall) begin
+            Stall_Pipeline = 1;
+        end else begin
+            // Load-Use Hazard Detection
+            if (MemRead_E && (rd_E != 0) && ((rd_E == rs1_D) || (rd_E == rs2_D))) begin
+                Stall_IF_ID = 1;
+            end
+            
+            // Control Hazard Detection
+            // Prioritize Flush over Stall_IF_ID
+            if (Branch_Taken) begin
+                Flush = 1;
+                Stall_IF_ID = 0; // Overrides load-use stall
+            end
         end
     end
 endmodule

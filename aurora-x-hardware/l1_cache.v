@@ -16,7 +16,10 @@ module l1_cache (
     output reg mem_we,
     output reg mem_re,
     input [63:0] mem_read_data,
-    input mem_ready
+    input mem_ready,
+    // Snoop Interface
+    input [63:0] snoop_addr,
+    input snoop_we
 );
     parameter CACHE_LINES = 16;
     
@@ -26,9 +29,12 @@ module l1_cache (
     
     wire [3:0] index = cpu_addr[6:3];
     wire [56:0] tag = cpu_addr[63:7];
+
+    wire [3:0] snoop_index = snoop_addr[6:3];
+    wire [56:0] snoop_tag = snoop_addr[63:7];
     
     reg [1:0] state, next_state;
-    localparam IDLE = 2'b00, FETCH = 2'b01;
+    localparam IDLE = 2'b00, FETCH = 2'b01, WRITE = 2'b10;
     
     integer i;
     always @(posedge clk or negedge rst_n) begin
@@ -37,12 +43,26 @@ module l1_cache (
             for (i=0; i<CACHE_LINES; i=i+1) cache_valid[i] <= 0;
         end else begin
             state <= next_state;
+            
+            // Handle updates to cache_valid array
+            for (i=0; i<CACHE_LINES; i=i+1) begin
+                if (snoop_we && i == snoop_index && cache_tag[i] == snoop_tag) begin
+                    cache_valid[i] <= 0; // Snoop Invalidate!
+                end else if (state == FETCH && mem_ready && i == index) begin
+                    cache_valid[i] <= 1; // Fetch Fill
+                end
+            end
+
+            // Handle updates to cache_data and cache_tag
             if (state == FETCH && mem_ready) begin
-                cache_valid[index] <= 1;
                 cache_tag[index] <= tag;
                 cache_data[index] <= mem_read_data;
             end else if (state == IDLE && cpu_we && (cache_valid[index] && cache_tag[index] == tag)) begin
-                cache_data[index] <= cpu_write_data;
+                // Update on Write-Through hit
+                // Only update if it wasn't just invalidated by a snoop in the same cycle
+                if (!(snoop_we && index == snoop_index && cache_tag[index] == snoop_tag)) begin
+                    cache_data[index] <= cpu_write_data;
+                end
             end
         end
     end
@@ -68,16 +88,30 @@ module l1_cache (
                     end
                 end else if (cpu_we) begin
                     mem_we = 1;
-                    if (!mem_ready) stall = 1;
+                    if (!mem_ready) begin
+                        stall = 1;
+                        next_state = WRITE;
+                    end
                 end
             end
             FETCH: begin
                 stall = 1;
                 mem_re = 1;
                 if (mem_ready) begin
+                    stall = 0; // Release stall in the same cycle data is ready
+                    cpu_read_data = mem_read_data; // Bypass cache to CPU
                     next_state = IDLE;
                 end
             end
+            WRITE: begin
+                stall = 1;
+                mem_we = 1;
+                if (mem_ready) begin
+                    stall = 0;
+                    next_state = IDLE;
+                end
+            end
+            default: next_state = IDLE;
         endcase
     end
 endmodule

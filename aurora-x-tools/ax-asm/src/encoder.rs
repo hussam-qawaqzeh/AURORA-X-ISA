@@ -37,7 +37,15 @@ pub enum Instruction {
     /// S-Type: STORE.X rs2, [rs1 + imm]
     StoreX { rs2: Reg, rs1: Reg, imm: i16 },
     /// B-Type: BRANCH.X rs1, rs2, imm
-    BranchX { rs1: Reg, rs2: Reg, imm: i16 },
+    BranchX { rs1: Reg, rs2: Reg, imm: i16, btype: u8 },
+    /// Arithmetic: MUL rd, rs1, rs2
+    Mul { rd: Reg, rs1: Reg, rs2: Reg },
+    /// Arithmetic: DIV rd, rs1, rs2
+    Div { rd: Reg, rs1: Reg, rs2: Reg },
+    /// Comparison: SLT rd, rs1, rs2
+    Slt { rd: Reg, rs1: Reg, rs2: Reg },
+    /// Comparison: SLTU rd, rs1, rs2
+    Sltu { rd: Reg, rs1: Reg, rs2: Reg },
     /// J-Type: JUMP.X rd, imm
     JumpX { rd: Reg, imm: i32 },
     /// CSR-Type: CSR.READ rd, csr_addr
@@ -82,12 +90,52 @@ impl Instruction {
                 // S-Type: [31:24 opcode] [23:19 rs1] [18:14 rs2] [13:0 imm14]
                 (opcode << 24) | (rs1_val << 19) | (rs2_val << 14) | imm_val
             }
-            Instruction::BranchX { rs1, rs2, imm } => {
-                let opcode: u32 = 0x40; // BRANCH.X
+            Instruction::BranchX { rs1, rs2, imm, btype } => {
+                let opcode: u32 = match btype {
+                    0 => 0x40, // BNE
+                    1 => 0x46, // BEQ
+                    2 => 0x47, // BLT
+                    3 => 0x48, // BGE
+                    4 => 0x49, // BLTU
+                    5 => 0x4A, // BGEU
+                    _ => 0x40,
+                };
                 let rs1_val = match rs1 { Reg::R(v) => *v as u32 };
                 let rs2_val = match rs2 { Reg::R(v) => *v as u32 };
                 let imm_val = (*imm as u32) & 0x3FFF; // 14-bit mask
                 (opcode << 24) | (rs1_val << 19) | (rs2_val << 14) | imm_val
+            }
+            Instruction::Mul { rd, rs1, rs2 } => {
+                let opcode: u32 = 0x07; // MUL.X
+                let funct9: u32 = 0x00;
+                let rd_val = match rd { Reg::R(v) => *v as u32 };
+                let rs1_val = match rs1 { Reg::R(v) => *v as u32 };
+                let rs2_val = match rs2 { Reg::R(v) => *v as u32 };
+                (opcode << 24) | (rd_val << 19) | (rs1_val << 14) | (rs2_val << 9) | funct9
+            }
+            Instruction::Div { rd, rs1, rs2 } => {
+                let opcode: u32 = 0x08; // DIV.X
+                let funct9: u32 = 0x00;
+                let rd_val = match rd { Reg::R(v) => *v as u32 };
+                let rs1_val = match rs1 { Reg::R(v) => *v as u32 };
+                let rs2_val = match rs2 { Reg::R(v) => *v as u32 };
+                (opcode << 24) | (rd_val << 19) | (rs1_val << 14) | (rs2_val << 9) | funct9
+            }
+            Instruction::Slt { rd, rs1, rs2 } => {
+                let opcode: u32 = 0x0A; // SLT
+                let funct9: u32 = 0x00;
+                let rd_val = match rd { Reg::R(v) => *v as u32 };
+                let rs1_val = match rs1 { Reg::R(v) => *v as u32 };
+                let rs2_val = match rs2 { Reg::R(v) => *v as u32 };
+                (opcode << 24) | (rd_val << 19) | (rs1_val << 14) | (rs2_val << 9) | funct9
+            }
+            Instruction::Sltu { rd, rs1, rs2 } => {
+                let opcode: u32 = 0x0B; // SLTU
+                let funct9: u32 = 0x00;
+                let rd_val = match rd { Reg::R(v) => *v as u32 };
+                let rs1_val = match rs1 { Reg::R(v) => *v as u32 };
+                let rs2_val = match rs2 { Reg::R(v) => *v as u32 };
+                (opcode << 24) | (rd_val << 19) | (rs1_val << 14) | (rs2_val << 9) | funct9
             }
             Instruction::JumpX { rd, imm } => {
                 let opcode: u32 = 0x41; // JUMP.X
