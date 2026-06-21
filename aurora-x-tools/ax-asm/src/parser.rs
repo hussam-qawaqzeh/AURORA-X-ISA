@@ -1,9 +1,10 @@
 use crate::encoder::{Instruction, Reg};
+use std::collections::HashMap;
 
-pub fn parse_line(line: &str) -> Option<Instruction> {
+pub fn parse_line(line: &str, labels: &HashMap<String, u32>, current_pc: u32) -> Option<Instruction> {
     let line = line.split(';').next().unwrap_or("").trim();
-    if line.is_empty() {
-        return None;
+    if line.is_empty() || line.ends_with(':') {
+        return None; // Ignore empty lines and label definitions during Pass 2
     }
 
     let parts: Vec<&str> = line.split(|c| c == ' ' || c == ',').filter(|s| !s.is_empty()).collect();
@@ -110,37 +111,43 @@ pub fn parse_line(line: &str) -> Option<Instruction> {
         }
         "BNE" | "BRANCH.X" => {
             if parts.len() >= 4 {
-                let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; let imm = parts[3].parse::<i16>().unwrap_or(0);
+                let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; 
+                let imm = parse_branch_target(parts[3], labels, current_pc)?;
                 return Some(Instruction::BranchX { rs1, rs2, imm, btype: 0 }); // 0x40
             }
         }
         "BEQ" => {
             if parts.len() >= 4 {
-                let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; let imm = parts[3].parse::<i16>().unwrap_or(0);
+                let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; 
+                let imm = parse_branch_target(parts[3], labels, current_pc)?;
                 return Some(Instruction::BranchX { rs1, rs2, imm, btype: 1 }); // 0x46
             }
         }
         "BLT" => {
             if parts.len() >= 4 {
-                let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; let imm = parts[3].parse::<i16>().unwrap_or(0);
+                let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; 
+                let imm = parse_branch_target(parts[3], labels, current_pc)?;
                 return Some(Instruction::BranchX { rs1, rs2, imm, btype: 2 }); // 0x47
             }
         }
         "BGE" => {
             if parts.len() >= 4 {
-                let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; let imm = parts[3].parse::<i16>().unwrap_or(0);
+                let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; 
+                let imm = parse_branch_target(parts[3], labels, current_pc)?;
                 return Some(Instruction::BranchX { rs1, rs2, imm, btype: 3 }); // 0x48
             }
         }
         "BLTU" => {
             if parts.len() >= 4 {
-                let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; let imm = parts[3].parse::<i16>().unwrap_or(0);
+                let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; 
+                let imm = parse_branch_target(parts[3], labels, current_pc)?;
                 return Some(Instruction::BranchX { rs1, rs2, imm, btype: 4 }); // 0x49
             }
         }
         "BGEU" => {
             if parts.len() >= 4 {
-                let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; let imm = parts[3].parse::<i16>().unwrap_or(0);
+                let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; 
+                let imm = parse_branch_target(parts[3], labels, current_pc)?;
                 return Some(Instruction::BranchX { rs1, rs2, imm, btype: 5 }); // 0x4A
             }
         }
@@ -171,7 +178,7 @@ pub fn parse_line(line: &str) -> Option<Instruction> {
         "JUMP.X" => {
             if parts.len() >= 3 {
                 let rd = Reg::parse(parts[1])?;
-                let imm = parts[2].parse::<i32>().unwrap_or(0);
+                let imm = parse_jump_target(parts[2], labels, current_pc)?;
                 return Some(Instruction::JumpX { rd, imm });
             }
         }
@@ -273,4 +280,26 @@ fn parse_hex_or_int(s: &str) -> Option<i16> {
         println!("Failed to parse imm: '{}'", s);
     }
     res
+}
+
+fn parse_branch_target(s: &str, labels: &HashMap<String, u32>, current_pc: u32) -> Option<i16> {
+    if let Some(&target_pc) = labels.get(s) {
+        let diff = target_pc as i32 - current_pc as i32;
+        Some((diff / 4) as i16)
+    } else {
+        parse_hex_or_int(s)
+    }
+}
+
+fn parse_jump_target(s: &str, labels: &HashMap<String, u32>, current_pc: u32) -> Option<i32> {
+    if let Some(&target_pc) = labels.get(s) {
+        let diff = target_pc as i32 - current_pc as i32;
+        Some(diff / 4)
+    } else {
+        if s.starts_with("0x") || s.starts_with("0X") {
+            i32::from_str_radix(&s[2..], 16).ok()
+        } else {
+            s.parse::<i32>().ok()
+        }
+    }
 }

@@ -12,13 +12,13 @@
 // Total cores in the SoC = NUM_P_CORES + NUM_E_CORES + NUM_AI_CORES
 // CAUTION: The ax_bus_scalable arbitration logic dynamically scales based on this.
 
-`define NUM_P_CORES  1   // Performance Cores (Full Pipeline, No Vector SIMT)
-`define NUM_E_CORES  1   // Efficiency Cores (Simplified Pipeline, Low Power)
-`define NUM_AI_CORES 1   // AI / GPU Cores (Full Pipeline + 2048-bit Vector SIMT)
+`define NUM_P_CORES  3   // Performance Cores (Full Pipeline, No Vector SIMT)
+`define NUM_E_CORES  3   // Efficiency Cores (Simplified Pipeline, Low Power)
+`define NUM_AI_CORES 3   // AI / GPU Cores (Full Pipeline + 2048-bit Vector SIMT)
 
 // Total cores (Helper macro - do not edit manually if possible, but Verilog doesn't 
 // allow complex macro math in some contexts, so we define it manually for array sizes)
-`define TOTAL_CORES 3
+`define TOTAL_CORES 9
 
 // ----------------------------------------------------------------------------
 // Cache Architecture Configuration
