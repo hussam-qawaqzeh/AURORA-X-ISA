@@ -18,15 +18,21 @@ module aurora_x_core #(
     
     // Snoop Interface
     input [63:0] snoop_addr,
-    input snoop_we
+    input snoop_we,
+    
+    // Interrupt Interface
+    input ext_intr,
+    input timer_intr,
+    input sw_intr
 );
 
     // Pipeline Registers
     // IF/ID
     reg [63:0] IF_ID_pc;
     reg [31:0] IF_ID_inst;
-    reg IF_ID_predicted_taken;
+    reg        IF_ID_predicted_taken;
     reg [63:0] IF_ID_predicted_target;
+    reg        IF_ID_thread_id;
 
     // ID/EX
     reg [63:0] ID_EX_pc;
@@ -54,6 +60,10 @@ module aurora_x_core #(
     reg ID_EX_VectorOp, ID_EX_VectorRegWrite, ID_EX_VectorMemRead, ID_EX_VectorMemWrite;
     reg ID_EX_VectorMaskWe, ID_EX_VectorUseMask;
     reg [2:0] ID_EX_VALU_Op;
+    reg [2:0] EX_MEM_VALU_Op;
+    reg EX_MEM_thread_id;
+    reg ID_EX_FpuOp, ID_EX_Fpu_ALU_Op;
+    reg ID_EX_thread_id;
 
     // EX/MEM
     reg [63:0] EX_MEM_pc;
@@ -74,7 +84,8 @@ module aurora_x_core #(
     reg [63:0] MEM_WB_alu_result;
     reg [63:0] MEM_WB_read_data;
     reg [2047:0] MEM_WB_valu_result;
-    reg [4:0]  MEM_WB_rd;
+    reg [4:0] MEM_WB_rd;
+    reg MEM_WB_thread_id;
     reg [11:0] MEM_WB_csr_addr;
     reg MEM_WB_RegWrite;
     reg [1:0] MEM_WB_MemtoReg;
@@ -87,9 +98,17 @@ module aurora_x_core #(
     // ------------------------------------------------------------------------
     // CSRs (Moved from single_cycle)
     // ------------------------------------------------------------------------
-    reg [63:0] csr_trap_handler;
-    reg [63:0] csr_epc;
-    reg [63:0] csr_trap_cause;
+    reg [63:0] virt_pc [0:1];
+    reg fetch_thread_id;
+    
+    // CSRs (duplicated for 2 threads)
+    reg [63:0] csr_mstatus [0:1];
+    reg [63:0] csr_mie [0:1];
+    reg [63:0] csr_mip [0:1];
+    reg [63:0] csr_mtimecmp [0:1];
+    reg [63:0] csr_epc [0:1];
+    reg [63:0] csr_trap_cause [0:1];
+    reg [63:0] csr_trap_handler [0:1];
     reg [63:0] test_status_reg;
     reg [63:0] csr_read_data_W;
     
@@ -101,30 +120,92 @@ module aurora_x_core #(
     reg tlb_update_en_pulse;
 
     assign test_status = test_status_reg;
+    
+    // Interrupt Logic
+    wire take_interrupt;
+    wire interrupt_pending;
+    
+    always @(*) begin
+        csr_mip[0] = 64'd0; csr_mip[1] = 64'd0;
+    end
+    
+    wire is_ext_intr_T0   = ext_intr & csr_mie[0][11];
+    wire is_timer_intr_T0 = timer_intr & csr_mie[0][7];
+    wire is_ext_intr_T1   = ext_intr & csr_mie[1][11];
+    wire is_timer_intr_T1 = timer_intr & csr_mie[1][7];
+    
+    // For simplicity, handle interrupts for Thread 0 and Thread 1 sequentially if needed.
+    // Let's attach interrupts to their respective threads.
+    wire take_interrupt_T0 = csr_mstatus[0][3] & (is_ext_intr_T0 | is_timer_intr_T0);
+    wire take_interrupt_T1 = csr_mstatus[1][3] & (is_ext_intr_T1 | is_timer_intr_T1);
+    
+    // EXRET
+    wire is_exret_T0 = (ID_EX_Exret && ID_EX_thread_id == 0);
+    wire is_exret_T1 = (ID_EX_Exret && ID_EX_thread_id == 1);
+    
+    assign interrupt_pending = ((csr_mie[0][11] & csr_mip[0][11]) | 
+                                (csr_mie[0][7]  & csr_mip[0][7])  | 
+                                (csr_mie[0][3]  & csr_mip[0][3]));
+                                
+    // Take interrupt if MIE is 1 and an enabled interrupt is pending, and pipeline is not stalled
+    assign take_interrupt = csr_mstatus[0][3] & interrupt_pending;
+
+    initial begin
+        virt_pc[0] = 64'h00000000;
+        virt_pc[1] = 64'h00000000;
+        fetch_thread_id = 1'b0;
+        csr_mstatus[0] = 64'h00000008; // MIE enabled by default
+        csr_mstatus[1] = 64'h00000008;
+        csr_mie[0] = 64'd0; csr_mie[1] = 64'd0;
+        csr_mip[0] = 64'd0; csr_mip[1] = 64'd0;
+        csr_epc[0] = 64'd0; csr_epc[1] = 64'd0;
+        csr_trap_handler[0] = 64'd0; csr_trap_handler[1] = 64'd0;
+    end
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            csr_trap_handler <= 0;
-            csr_epc <= 0;
-            csr_trap_cause <= 0;
-            test_status_reg <= 0;
-        end else if (EX_MEM_CSR_Write) begin
-            case (EX_MEM_csr_addr)
-                12'h700: test_status_reg <= EX_MEM_alu_result;
-                12'h020: csr_trap_handler <= EX_MEM_alu_result;
-                12'h021: csr_epc <= EX_MEM_alu_result;
-                12'h008: csr_trap_cause <= EX_MEM_alu_result;
-                12'h180: csr_satp <= EX_MEM_alu_result;
-                12'h181: csr_tlb_update_vpn <= EX_MEM_alu_result[26:0];
-                12'h182: csr_tlb_update_ppn <= EX_MEM_alu_result[43:0];
-                12'h183: begin
-                    csr_tlb_update_flags <= EX_MEM_alu_result[3:0];
-                    if (EX_MEM_alu_result[3]) tlb_update_en_pulse <= 1;
-                end
-            endcase
-        end else if (ID_EX_Ecall) begin
-            csr_epc <= ID_EX_pc;
-            csr_trap_cause <= 64'd8; // Env call from User mode
+            virt_pc[0] <= 64'h00000000;
+            virt_pc[1] <= 64'h00000000;
+            fetch_thread_id <= 1'b0;
+            csr_mstatus[0] <= 64'h00000008;
+            csr_mstatus[1] <= 64'h00000008;
+            csr_mie[0] <= 64'd0; csr_mie[1] <= 64'd0;
+            csr_epc[0] <= 64'd0; csr_epc[1] <= 64'd0;
+            csr_trap_handler[0] <= 64'd0; csr_trap_handler[1] <= 64'd0;
+        end else begin
+            if (EX_MEM_CSR_Write) begin
+                case (EX_MEM_csr_addr)
+                    12'h700: test_status_reg <= EX_MEM_alu_result;
+                    12'h020: csr_trap_handler[EX_MEM_thread_id] <= EX_MEM_alu_result;
+                    12'h021: csr_epc[EX_MEM_thread_id] <= EX_MEM_alu_result;
+                    12'h008: csr_trap_cause[EX_MEM_thread_id] <= EX_MEM_alu_result;
+                    12'h180: csr_satp <= EX_MEM_alu_result;
+                    12'h181: csr_tlb_update_vpn <= EX_MEM_alu_result[26:0];
+                    12'h182: csr_tlb_update_ppn <= EX_MEM_alu_result[43:0];
+                    12'h183: begin
+                        csr_tlb_update_flags <= EX_MEM_alu_result[3:0];
+                        if (EX_MEM_alu_result[3]) tlb_update_en_pulse <= 1;
+                    end
+                    12'h300: csr_mstatus[EX_MEM_thread_id] <= EX_MEM_alu_result; // mstatus
+                    12'h304: csr_mie[EX_MEM_thread_id] <= EX_MEM_alu_result;     // mie
+                endcase
+            end else if (ID_EX_Ecall) begin
+                csr_epc[ID_EX_thread_id] <= ID_EX_pc;
+                csr_trap_cause[ID_EX_thread_id] <= 64'd8; // Env call from User mode
+                csr_mstatus[ID_EX_thread_id][7] <= csr_mstatus[ID_EX_thread_id][3]; // MPIE = MIE
+                csr_mstatus[ID_EX_thread_id][3] <= 1'b0;           // MIE = 0
+            end else if (take_interrupt && !Stall_Pipeline) begin
+                csr_epc[IF_ID_thread_id] <= IF_ID_pc;
+                if (csr_mip[0][11] && csr_mie[0][11]) csr_trap_cause[0] <= 64'h800000000000000B;
+                else if (csr_mip[0][7] && csr_mie[0][7]) csr_trap_cause[0] <= 64'h8000000000000007;
+                else if (csr_mip[0][3] && csr_mie[0][3]) csr_trap_cause[0] <= 64'h8000000000000003;
+                
+                csr_mstatus[0][7] <= csr_mstatus[0][3];
+                csr_mstatus[0][3] <= 1'b0;
+            end else if (ID_EX_Exret) begin
+                csr_mstatus[ID_EX_thread_id][3] <= csr_mstatus[ID_EX_thread_id][7];
+                csr_mstatus[ID_EX_thread_id][7] <= 1'b1;
+            end
         end
     end
 
@@ -136,11 +217,10 @@ module aurora_x_core #(
     wire Flush;
     wire cache_stall;
     
-    reg [63:0] virt_pc;
     wire [63:0] physical_pc;
     wire i_tlb_miss, i_page_fault;
 
-    wire [63:0] pc_plus_4 = virt_pc + 4;
+    wire [63:0] pc_plus_4 = virt_pc[fetch_thread_id] + 4;
     wire [63:0] pc_next;
     
     // BPU Signals
@@ -159,7 +239,7 @@ module aurora_x_core #(
             bpu u_bpu (
                 .clk(clk),
                 .rst_n(rst_n),
-                .pc(virt_pc),
+                .pc(virt_pc[fetch_thread_id]),
                 .predicted_taken(bpu_predicted_taken),
                 .predicted_target(bpu_predicted_target),
                 .update_en(bpu_update_en),
@@ -178,11 +258,6 @@ module aurora_x_core #(
     wire [63:0] virt_pc_next;
     wire [63:0] Correct_Target_EX;
 
-    assign virt_pc_next = ID_EX_Ecall ? csr_trap_handler :
-                     ID_EX_Exret ? csr_epc :
-                     Branch_Mispredict_EX ? Correct_Target_EX : 
-                     bpu_predicted_taken ? bpu_predicted_target : pc_plus_4;
-
     generate
         if (`ENABLE_MMU) begin : gen_i_mmu
             mmu i_mmu (
@@ -191,7 +266,7 @@ module aurora_x_core #(
                 .satp_en(csr_satp[0]),
                 .is_instruction(1'b1),
                 .is_write(1'b0),
-                .va(virt_pc),
+                .va(virt_pc[fetch_thread_id]),
                 .pa(physical_pc),
                 .tlb_miss(i_tlb_miss),
                 .page_fault(i_page_fault),
@@ -203,7 +278,7 @@ module aurora_x_core #(
                 .tlb_update_x(csr_tlb_update_flags[2])
             );
         end else begin : gen_no_i_mmu
-            assign physical_pc = virt_pc;
+            assign physical_pc = virt_pc[fetch_thread_id];
             assign i_tlb_miss = 0;
             assign i_page_fault = 0;
         end
@@ -213,8 +288,34 @@ module aurora_x_core #(
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
+            virt_pc[0] <= 64'h00000000;
+            virt_pc[1] <= 64'h00000000;
+            fetch_thread_id <= 1'b0;
+        end else begin
+            if (!Stall_IF_ID) begin
+                if (take_interrupt_T0 && fetch_thread_id == 0) begin
+                    virt_pc[0] <= csr_trap_handler[0];
+                end else if (take_interrupt_T1 && fetch_thread_id == 1) begin
+                    virt_pc[1] <= csr_trap_handler[1];
+                end else if (is_exret_T0 && fetch_thread_id == 0) begin
+                    virt_pc[0] <= csr_epc[0];
+                end else if (is_exret_T1 && fetch_thread_id == 1) begin
+                    virt_pc[1] <= csr_epc[1];
+                end else if (Branch_Taken_EX && ID_EX_thread_id == fetch_thread_id) begin
+                    virt_pc[fetch_thread_id] <= Branch_Target_EX;
+                end else if (bpu_predicted_taken) begin
+                    virt_pc[fetch_thread_id] <= bpu_predicted_target;
+                end else begin
+                    virt_pc[fetch_thread_id] <= pc_plus_4;
+                end
+                fetch_thread_id <= ~fetch_thread_id;
+            end
+        end
+    end
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
             tlb_update_en_pulse <= 0;
-            virt_pc <= 0;
             IF_ID_pc <= 0;
             IF_ID_inst <= 32'd0;
             IF_ID_predicted_taken <= 0;
@@ -222,9 +323,9 @@ module aurora_x_core #(
         end else if (!Stall_Pipeline) begin
             tlb_update_en_pulse <= 0;
             if (!Stall_IF_ID) begin
-                virt_pc <= virt_pc_next;
-                IF_ID_pc <= virt_pc;
+                IF_ID_pc <= virt_pc[fetch_thread_id];
                 IF_ID_inst <= inst;
+                IF_ID_thread_id <= fetch_thread_id;
                 IF_ID_predicted_taken <= bpu_predicted_taken;
                 IF_ID_predicted_target <= bpu_predicted_target;
             end
@@ -239,7 +340,7 @@ module aurora_x_core #(
     // ------------------------------------------------------------------------
     // STAGE 2: INSTRUCTION DECODE (ID)
     // ------------------------------------------------------------------------
-    wire [4:0] rs1, rs2, rd;
+    wire [4:0] rs1_D, rs2_D, rd_D;
     wire [13:0] imm14;
     wire [18:0] imm19;
     wire [11:0] csr_addr;
@@ -253,12 +354,13 @@ module aurora_x_core #(
     wire VectorOp_D, VectorRegWrite_D, VectorMemRead_D, VectorMemWrite_D;
     wire VectorMaskWe_D, VectorUseMask_D;
     wire [2:0] VALU_Op_D;
+    wire FpuOp_D, Fpu_ALU_Op_D;
     
     decoder u_dec (
         .inst(IF_ID_inst),
-        .rs1(rs1),
-        .rs2(rs2),
-        .rd(rd),
+        .rs1(rs1_D),
+        .rs2(rs2_D),
+        .rd(rd_D),
         .imm14(imm14),
         .imm19(imm19),
         .csr_addr(csr_addr),
@@ -282,19 +384,23 @@ module aurora_x_core #(
         .VectorMemWrite(VectorMemWrite_D),
         .VALU_Op(VALU_Op_D),
         .VectorMaskWe(VectorMaskWe_D),
-        .VectorUseMask(VectorUseMask_D)
+        .VectorUseMask(VectorUseMask_D),
+        .FpuOp(FpuOp_D),
+        .Fpu_ALU_Op(Fpu_ALU_Op_D)
     );
 
     wire [63:0] read_data1_D, read_data2_D;
     wire [63:0] write_data_W;
 
-    register_file u_rf (
+    register_file u_regfile (
         .clk(clk),
-        .we(MEM_WB_RegWrite),
-        .rs1(rs1),
-        .rs2(rs2),
+        .we(MEM_WB_RegWrite && !MEM_WB_VectorRegWrite),
+        .rs1(rs1_D),
+        .rs2(rs2_D),
         .rd(MEM_WB_rd),
         .write_data(write_data_W),
+        .thread_id_read(IF_ID_thread_id),
+        .thread_id_write(MEM_WB_thread_id),
         .read_data1(read_data1_D),
         .read_data2(read_data2_D)
     );
@@ -304,17 +410,19 @@ module aurora_x_core #(
     
     generate
         if (CORE_TYPE == 2) begin : gen_vrf
-            vector_register_file u_vrf (
+            vector_register_file u_vregfile (
                 .clk(clk),
                 .we(MEM_WB_VectorRegWrite),
                 .mask_we(MEM_WB_VectorMaskWe),
                 .use_mask(MEM_WB_VectorUseMask),
-                .rs1(rs1),
-                .rs2(rs2),
+                .rs1(rs1_D),
+                .rs2(rs2_D),
                 .rd_write(MEM_WB_rd),
-                .vd_read(rd),
+                .vd_read(rd_D),
                 .write_data(vwrite_data_W),
-                .mask_data(MEM_WB_Mask_Result),
+                .mask_data(write_data_W),
+                .thread_id_read(IF_ID_thread_id),
+                .thread_id_write(MEM_WB_thread_id),
                 .read_data1(vread_data1_D),
                 .read_data2(vread_data2_D),
                 .read_data_vd(vread_data_vd_D)
@@ -329,13 +437,16 @@ module aurora_x_core #(
     wire [63:0] imm14_sext_D = {{50{imm14[13]}}, imm14};
     wire [63:0] imm19_sext_D = {{45{imm19[18]}}, imm19};
 
-    hazard_unit u_hu (
-        .rs1_D(rs1),
-        .rs2_D(rs2),
+    wire Branch_Taken_EX;
+    hazard_unit u_hazard (
+        .rs1_D(rs1_D),
+        .rs2_D(rs2_D),
         .rd_E(ID_EX_rd),
         .MemRead_E(ID_EX_MemRead),
-        .Branch_Taken(Branch_Mispredict_EX || ID_EX_Ecall || ID_EX_Exret),
+        .Branch_Taken(Branch_Taken_EX),
         .cache_stall(cache_stall),
+        .thread_id_D(IF_ID_thread_id),
+        .thread_id_E(ID_EX_thread_id),
         .Stall_IF_ID(Stall_IF_ID),
         .Stall_Pipeline(Stall_Pipeline),
         .Flush(Flush)
@@ -362,6 +473,7 @@ module aurora_x_core #(
                 ID_EX_CSR_Write <= 0; ID_EX_CSR_Read <= 0; ID_EX_Ecall <= 0; ID_EX_Exret <= 0;
                 ID_EX_VectorOp <= 0; ID_EX_VectorRegWrite <= 0; ID_EX_VectorMemRead <= 0; ID_EX_VectorMemWrite <= 0;
                 ID_EX_VectorMaskWe <= 0; ID_EX_VectorUseMask <= 0;
+                ID_EX_FpuOp <= 0; ID_EX_Fpu_ALU_Op <= 0;
                 ID_EX_predicted_taken <= 0;
                 ID_EX_predicted_target <= 0;
             end else begin
@@ -373,9 +485,9 @@ module aurora_x_core #(
                 ID_EX_vread_data_vd <= vread_data_vd_D;
                 ID_EX_imm14_sext <= imm14_sext_D;
                 ID_EX_imm19_sext <= imm19_sext_D;
-                ID_EX_rs1 <= rs1;
-                ID_EX_rs2 <= rs2;
-                ID_EX_rd <= rd;
+                ID_EX_rs1 <= rs1_D;
+                ID_EX_rs2 <= rs2_D;
+                ID_EX_rd <= rd_D;
                 ID_EX_csr_addr <= csr_addr;
                 ID_EX_RegWrite <= RegWrite_D;
                 ID_EX_ALUSrc_B <= ALUSrc_B_D;
@@ -397,6 +509,8 @@ module aurora_x_core #(
                 ID_EX_VectorMaskWe <= VectorMaskWe_D;
                 ID_EX_VectorUseMask <= VectorUseMask_D;
                 ID_EX_VALU_Op <= VALU_Op_D;
+                ID_EX_FpuOp <= FpuOp_D;
+                ID_EX_Fpu_ALU_Op <= Fpu_ALU_Op_D;
                 ID_EX_predicted_taken <= IF_ID_predicted_taken;
                 ID_EX_predicted_target <= IF_ID_predicted_target;
             end
@@ -435,16 +549,29 @@ module aurora_x_core #(
         if (ID_EX_CSR_Read) begin
             case (ID_EX_csr_addr)
                 12'h700: csr_read_data_E = test_status_reg;
-                12'h020: csr_read_data_E = csr_trap_handler;
-                12'h021: csr_read_data_E = csr_epc;
-                12'h008: csr_read_data_E = csr_trap_cause;
+                12'h020: csr_read_data_E = csr_trap_handler[ID_EX_thread_id];
+                12'h021: csr_read_data_E = csr_epc[ID_EX_thread_id];
+                12'h008: csr_read_data_E = csr_trap_cause[ID_EX_thread_id];
+                12'h300: csr_read_data_E = csr_mstatus[ID_EX_thread_id];
+                12'h304: csr_read_data_E = csr_mie[ID_EX_thread_id];
+                12'h344: csr_read_data_E = csr_mip[ID_EX_thread_id];
                 12'hF14: csr_read_data_E = {60'd0, core_id};
                 default: csr_read_data_E = 64'd0;
             endcase
         end
     end
 
-    assign alu_result_E = ID_EX_CSR_Read ? csr_read_data_E : actual_alu_result;
+    // FPU
+    wire [63:0] fpu_result_E;
+    ax_fpu u_fpu (
+        .A(alu_in1),
+        .B(alu_in2),
+        .Fpu_ALU_Op(ID_EX_Fpu_ALU_Op),
+        .Result(fpu_result_E)
+    );
+
+    assign alu_result_E = ID_EX_FpuOp ? fpu_result_E : 
+                          ID_EX_CSR_Read ? csr_read_data_E : actual_alu_result;
 
     // Vector ALU
     wire [2047:0] valu_in2 = ID_EX_ALUSrc_B ? {1984'd0, ID_EX_imm14_sext} : ID_EX_vread_data2;
@@ -489,7 +616,6 @@ module aurora_x_core #(
             default: Branch_Cond_Met = 0;
         endcase
     end
-    wire Branch_Taken_EX;
     wire [63:0] Branch_Target_EX;
     
     assign Branch_Taken_EX = (ID_EX_Branch && Branch_Cond_Met) || ID_EX_Jump;
@@ -534,6 +660,8 @@ module aurora_x_core #(
             EX_MEM_VectorMaskWe <= ID_EX_VectorMaskWe;
             EX_MEM_VectorUseMask <= ID_EX_VectorUseMask;
             EX_MEM_Mask_Result <= valu_mask_result_E;
+            EX_MEM_thread_id <= ID_EX_thread_id;
+            EX_MEM_VALU_Op <= ID_EX_VALU_Op;
         end
     end
 
@@ -611,6 +739,7 @@ module aurora_x_core #(
             MEM_WB_VectorMaskWe <= EX_MEM_VectorMaskWe;
             MEM_WB_VectorUseMask <= EX_MEM_VectorUseMask;
             MEM_WB_Mask_Result <= EX_MEM_Mask_Result;
+            MEM_WB_thread_id <= EX_MEM_thread_id;
         end
     end
 
@@ -622,9 +751,12 @@ module aurora_x_core #(
         if (MEM_WB_CSR_Read) begin
             case (MEM_WB_csr_addr)
                 12'h700: csr_read_data_W = test_status_reg;
-                12'h020: csr_read_data_W = csr_trap_handler;
-                12'h021: csr_read_data_W = csr_epc;
-                12'h008: csr_read_data_W = csr_trap_cause;
+                12'h020: csr_read_data_W = csr_trap_handler[MEM_WB_thread_id];
+                12'h021: csr_read_data_W = csr_epc[MEM_WB_thread_id];
+                12'h008: csr_read_data_W = csr_trap_cause[MEM_WB_thread_id];
+                12'h300: csr_read_data_W = csr_mstatus[MEM_WB_thread_id];
+                12'h304: csr_read_data_W = csr_mie[MEM_WB_thread_id];
+                12'h344: csr_read_data_W = csr_mip[MEM_WB_thread_id];
                 12'hF14: csr_read_data_W = {60'd0, core_id}; // Hardware Thread ID
                 default: csr_read_data_W = 64'd0;
             endcase

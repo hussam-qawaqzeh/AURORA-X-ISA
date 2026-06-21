@@ -30,6 +30,16 @@ module tb_aurora_x_soc();
 
     wire [(`TOTAL_CORES*64)-1:0] cores_test_status;
 
+    wire uart_tx;
+    wire uart_rx = 1'b1;
+    wire [`TOTAL_CORES-1:0] ext_intr = 0;
+    
+    wire [31:0] gpio_pins;
+    wire spi_sck;
+    wire spi_mosi;
+    wire spi_miso = 1'b0;
+    wire [3:0] spi_cs;
+
     aurora_x_soc u_soc (
         .clk(clk),
         .rst_n(rst_n),
@@ -41,7 +51,15 @@ module tb_aurora_x_soc();
         .mem_re(mem_re),
         .mem_read_val(mem_read_val),
         .mem_ready(mem_ready),
-        .cores_test_status(cores_test_status)
+        .cores_test_status(cores_test_status),
+        .ext_intr(ext_intr),
+        .uart_tx(uart_tx),
+        .uart_rx(uart_rx),
+        .gpio_pins(gpio_pins),
+        .spi_sck(spi_sck),
+        .spi_mosi(spi_mosi),
+        .spi_miso(spi_miso),
+        .spi_cs(spi_cs)
     );
 
     // Main Memory Logic (Simulation with 3 cycle latency)

@@ -9,21 +9,24 @@ module vector_register_file (
     input  wire [4:0]    vd_read,
     input  wire [2047:0] write_data,
     input  wire [63:0]   mask_data,
+    input  wire          thread_id_read,
+    input  wire          thread_id_write,
     output wire [2047:0] read_data1,
     output wire [2047:0] read_data2,
     output wire [2047:0] read_data_vd
 );
 
-    // 32 Vector Registers, 2048-bits (256 bytes) each
-    reg [2047:0] vr [0:31];
+    // 64 Vector Registers (32 per thread)
+    reg [2047:0] vr [0:63];
     
-    // Execution Mask Register
-    reg [63:0] vmask;
+    // Execution Mask Register (1 per thread)
+    reg [63:0] vmask [0:1];
 
     integer i;
     initial begin
-        vmask = 64'hFFFFFFFFFFFFFFFF;
-        for (i = 0; i < 32; i = i + 1) begin
+        vmask[0] = 64'hFFFFFFFFFFFFFFFF;
+        vmask[1] = 64'hFFFFFFFFFFFFFFFF;
+        for (i = 0; i < 64; i = i + 1) begin
             vr[i] = 2048'd0;
         end
     end
@@ -31,21 +34,20 @@ module vector_register_file (
     // Write Port (Synchronous)
     always @(posedge clk) begin
         if (mask_we) begin
-            vmask <= mask_data;
+            vmask[thread_id_write] <= mask_data;
         end
         if (we) begin
             for (i = 0; i < 64; i = i + 1) begin
-                if (!use_mask || vmask[i]) begin
-                    vr[rd_write][i*32 +: 32] <= write_data[i*32 +: 32];
+                if (!use_mask || vmask[thread_id_write][i]) begin
+                    vr[{thread_id_write, rd_write}][i*32 +: 32] <= write_data[i*32 +: 32];
                 end
             end
         end
     end
 
     // Read Ports (Combinational)
-    // Internal forwarding for Write-Before-Read hazard
-    assign read_data1 = (we && rd_write == rs1) ? write_data : vr[rs1];
-    assign read_data2 = (we && rd_write == rs2) ? write_data : vr[rs2];
-    assign read_data_vd = (we && rd_write == vd_read) ? write_data : vr[vd_read]; // For VFMA accumulator
+    assign read_data1 = vr[{thread_id_read, rs1}];
+    assign read_data2 = vr[{thread_id_read, rs2}];
+    assign read_data_vd = vr[{thread_id_read, vd_read}]; // For VFMA accumulator
 
 endmodule

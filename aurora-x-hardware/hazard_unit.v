@@ -5,6 +5,8 @@ module hazard_unit (
     input MemRead_E,
     input Branch_Taken,
     input cache_stall,
+    input thread_id_D,
+    input thread_id_E,
     
     output reg Stall_IF_ID,
     output reg Stall_Pipeline,
@@ -20,7 +22,7 @@ module hazard_unit (
             Stall_Pipeline = 1;
         end else begin
             // Load-Use Hazard Detection
-            if (MemRead_E && (rd_E != 0) && ((rd_E == rs1_D) || (rd_E == rs2_D))) begin
+            if (thread_id_D == thread_id_E && MemRead_E && (rd_E != 0) && ((rd_E == rs1_D) || (rd_E == rs2_D))) begin
                 Stall_IF_ID = 1;
             end
             

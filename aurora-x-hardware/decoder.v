@@ -29,6 +29,10 @@ module decoder (
     output reg  [1:0]  MemtoReg,      // 00=ALU, 01=Mem, 10=PC+4, 11=CSR
     output reg         Ecall,
     output reg         Exret,
+    
+    // FPU Control Signals
+    output reg         FpuOp,
+    output reg         Fpu_ALU_Op, // 0: ADD, 1: MUL
 
     // Vector Control Signals
     output reg         VectorOp,
@@ -70,6 +74,7 @@ module decoder (
         MemtoReg  = 2'b00;
         Ecall     = 0;
         Exret     = 0;
+        FpuOp     = 0; Fpu_ALU_Op = 0;
         VectorOp = 0; VectorRegWrite = 0; VectorMemRead = 0; VectorMemWrite = 0; VALU_Op = 0;
         VectorMaskWe = 0; VectorUseMask = 0;
 
@@ -103,6 +108,12 @@ module decoder (
             end
             8'h09: begin // ADDI
                 RegWrite = 1; ALUSrc_B = 1; ALU_Op = 4'b0000; // ADD
+            end
+            8'h10: begin // FADD.X
+                RegWrite = 1; ALUSrc_B = 0; FpuOp = 1; Fpu_ALU_Op = 0;
+            end
+            8'h11: begin // FMUL.X
+                RegWrite = 1; ALUSrc_B = 0; FpuOp = 1; Fpu_ALU_Op = 1;
             end
             8'h21: begin // LOAD.X
                 RegWrite = 1; ALUSrc_B = 1; ALU_Op = 4'b0000; // rs1 + imm14
