@@ -18,8 +18,19 @@ module ax_pmu (
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            // Enable all cores by default, full speed (divider = 0)
-            pmu_ctrl <= 64'hFFFFFFFFFFFFFFFF; 
+            // Enable all cores by default (lower 32 bits = all 1s)
+            pmu_ctrl[31:0] <= 32'hFFFFFFFF; 
+            
+            // Set hardware clock dividers based on aurora_config.vh
+            for (i = 0; i < `NUM_P_CORES; i = i + 1) begin
+                pmu_ctrl[32 + (i*2) +: 2] <= `FREQ_DIV_P_CORE;
+            end
+            for (i = 0; i < `NUM_E_CORES; i = i + 1) begin
+                pmu_ctrl[32 + ((`NUM_P_CORES + i)*2) +: 2] <= `FREQ_DIV_E_CORE;
+            end
+            for (i = 0; i < `NUM_AG_CORES; i = i + 1) begin
+                pmu_ctrl[32 + ((`NUM_P_CORES + `NUM_E_CORES + i)*2) +: 2] <= `FREQ_DIV_AG_CORE;
+            end
         end else begin
             // Any core can write to the PMU control register
             for (i = 0; i < `TOTAL_CORES; i = i + 1) begin

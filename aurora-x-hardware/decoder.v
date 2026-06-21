@@ -35,7 +35,9 @@ module decoder (
     output reg         VectorRegWrite,
     output reg         VectorMemRead,
     output reg         VectorMemWrite,
-    output reg  [2:0]  VALU_Op
+    output reg  [2:0]  VALU_Op,
+    output reg         VectorMaskWe,
+    output reg         VectorUseMask
 );
 
     assign opcode   = inst[31:24];
@@ -68,11 +70,8 @@ module decoder (
         MemtoReg  = 2'b00;
         Ecall     = 0;
         Exret     = 0;
-        VectorOp  = 0;
-        VectorRegWrite = 0;
-        VectorMemRead = 0;
-        VectorMemWrite = 0;
-        VALU_Op   = 3'b000;
+        VectorOp = 0; VectorRegWrite = 0; VectorMemRead = 0; VectorMemWrite = 0; VALU_Op = 0;
+        VectorMaskWe = 0; VectorUseMask = 0;
 
         case (opcode)
             8'h01: begin // ADD.X / SUB.X
@@ -161,15 +160,26 @@ module decoder (
             end
             8'h62: begin // VADD
                 VectorOp = 1; VALU_Op = 3'b000; VectorRegWrite = 1;
+                VectorUseMask = funct9[8];
             end
             8'h63: begin // VMUL
                 VectorOp = 1; VALU_Op = 3'b001; VectorRegWrite = 1;
+                VectorUseMask = funct9[8];
             end
             8'h64: begin // VFMA
                 VectorOp = 1; VALU_Op = 3'b010; VectorRegWrite = 1;
+                VectorUseMask = funct9[8];
             end
-            8'h65: begin // VPERM
-                VectorOp = 1; VALU_Op = 3'b011; VectorRegWrite = 1;
+            8'h53: begin // VPERM (Vector Permute)
+                VectorOp = 1;
+                VectorRegWrite = 1;
+                VALU_Op = 3'b011;
+                VectorUseMask = funct9[8]; // MSB of funct9 enables mask
+            end
+            8'h54: begin // VCMP.GT (Vector Compare Greater Than)
+                VectorOp = 1;
+                VectorMaskWe = 1; // Write to Mask Register, not Vector Register
+                VALU_Op = 3'b100;
             end
             default: ; // NOP or Unknown
         endcase

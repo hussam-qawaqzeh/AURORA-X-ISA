@@ -93,8 +93,8 @@ module aurora_x_soc (
             );
         end
 
-        // AI-Cores
-        for (g = 0; g < `NUM_AI_CORES; g = g + 1) begin : gen_ai_cores
+        // AG-Cores (AI & Graphics)
+        for (g = 0; g < `NUM_AG_CORES; g = g + 1) begin : gen_ag_cores
             localparam idx = `NUM_P_CORES + `NUM_E_CORES + g;
             aurora_x_core #(.CORE_TYPE(2)) u_core (
                 .clk(clk_cores[idx]),

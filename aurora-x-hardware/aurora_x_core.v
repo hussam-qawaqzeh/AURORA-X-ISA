@@ -3,7 +3,7 @@ module aurora_x_core #(
 )(
     input clk,
     input rst_n,
-    output reg [63:0] pc,
+    output [63:0] pc,
     input  [31:0] inst,
     output [63:0] data_addr,
     output [63:0] data_write_val,
@@ -25,6 +25,8 @@ module aurora_x_core #(
     // IF/ID
     reg [63:0] IF_ID_pc;
     reg [31:0] IF_ID_inst;
+    reg IF_ID_predicted_taken;
+    reg [63:0] IF_ID_predicted_target;
 
     // ID/EX
     reg [63:0] ID_EX_pc;
@@ -39,6 +41,8 @@ module aurora_x_core #(
     reg [4:0]  ID_EX_rs2;
     reg [4:0]  ID_EX_rd;
     reg [11:0] ID_EX_csr_addr;
+    reg ID_EX_predicted_taken;
+    reg [63:0] ID_EX_predicted_target;
     
     // Control signals
     reg ID_EX_RegWrite, ID_EX_ALUSrc_B, ID_EX_MemRead, ID_EX_MemWrite;
@@ -48,6 +52,7 @@ module aurora_x_core #(
     reg [2:0] ID_EX_Branch_Type;
     reg ID_EX_Ecall, ID_EX_Exret;
     reg ID_EX_VectorOp, ID_EX_VectorRegWrite, ID_EX_VectorMemRead, ID_EX_VectorMemWrite;
+    reg ID_EX_VectorMaskWe, ID_EX_VectorUseMask;
     reg [2:0] ID_EX_VALU_Op;
 
     // EX/MEM
@@ -61,6 +66,8 @@ module aurora_x_core #(
     reg [1:0] EX_MEM_MemtoReg;
     reg EX_MEM_CSR_Write, EX_MEM_CSR_Read;
     reg EX_MEM_VectorRegWrite, EX_MEM_VectorMemRead, EX_MEM_VectorMemWrite;
+    reg EX_MEM_VectorMaskWe, EX_MEM_VectorUseMask;
+    reg [63:0] EX_MEM_Mask_Result;
 
     // MEM/WB
     reg [63:0] MEM_WB_pc;
@@ -74,6 +81,8 @@ module aurora_x_core #(
     reg MEM_WB_CSR_Read;
     reg MEM_WB_VectorRegWrite;
     reg MEM_WB_VectorMemRead;
+    reg MEM_WB_VectorMaskWe, MEM_WB_VectorUseMask;
+    reg [63:0] MEM_WB_Mask_Result;
 
     // ------------------------------------------------------------------------
     // CSRs (Moved from single_cycle)
@@ -83,6 +92,13 @@ module aurora_x_core #(
     reg [63:0] csr_trap_cause;
     reg [63:0] test_status_reg;
     reg [63:0] csr_read_data_W;
+    
+    // MMU CSRs
+    reg [63:0] csr_satp;
+    reg [26:0] csr_tlb_update_vpn;
+    reg [43:0] csr_tlb_update_ppn;
+    reg [3:0]  csr_tlb_update_flags;
+    reg tlb_update_en_pulse;
 
     assign test_status = test_status_reg;
 
@@ -98,6 +114,13 @@ module aurora_x_core #(
                 12'h020: csr_trap_handler <= EX_MEM_alu_result;
                 12'h021: csr_epc <= EX_MEM_alu_result;
                 12'h008: csr_trap_cause <= EX_MEM_alu_result;
+                12'h180: csr_satp <= EX_MEM_alu_result;
+                12'h181: csr_tlb_update_vpn <= EX_MEM_alu_result[26:0];
+                12'h182: csr_tlb_update_ppn <= EX_MEM_alu_result[43:0];
+                12'h183: begin
+                    csr_tlb_update_flags <= EX_MEM_alu_result[3:0];
+                    if (EX_MEM_alu_result[3]) tlb_update_en_pulse <= 1;
+                end
             endcase
         end else if (ID_EX_Ecall) begin
             csr_epc <= ID_EX_pc;
@@ -113,29 +136,102 @@ module aurora_x_core #(
     wire Flush;
     wire cache_stall;
     
-    wire [63:0] pc_plus_4 = pc + 4;
+    reg [63:0] virt_pc;
+    wire [63:0] physical_pc;
+    wire i_tlb_miss, i_page_fault;
+
+    wire [63:0] pc_plus_4 = virt_pc + 4;
     wire [63:0] pc_next;
     
-    wire Branch_Taken_EX;
-    wire [63:0] Branch_Target_EX;
+    // BPU Signals
+    wire bpu_predicted_taken;
+    wire [63:0] bpu_predicted_target;
+    
+    // BPU Update Signals from EX stage
+    wire bpu_update_en;
+    wire [63:0] bpu_update_pc;
+    wire bpu_update_taken;
+    wire [63:0] bpu_update_target;
+    wire bpu_update_is_branch;
 
-    assign pc_next = ID_EX_Ecall ? csr_trap_handler :
+    generate
+        if (CORE_TYPE == 0 || CORE_TYPE == 2) begin : gen_bpu
+            bpu u_bpu (
+                .clk(clk),
+                .rst_n(rst_n),
+                .pc(virt_pc),
+                .predicted_taken(bpu_predicted_taken),
+                .predicted_target(bpu_predicted_target),
+                .update_en(bpu_update_en),
+                .update_pc(bpu_update_pc),
+                .update_taken(bpu_update_taken),
+                .update_target(bpu_update_target),
+                .update_is_branch(bpu_update_is_branch)
+            );
+        end else begin : gen_no_bpu
+            assign bpu_predicted_taken = 1'b0;
+            assign bpu_predicted_target = 64'd0;
+        end
+    endgenerate
+
+    wire Branch_Mispredict_EX;
+    wire [63:0] virt_pc_next;
+    wire [63:0] Correct_Target_EX;
+
+    assign virt_pc_next = ID_EX_Ecall ? csr_trap_handler :
                      ID_EX_Exret ? csr_epc :
-                     Branch_Taken_EX ? Branch_Target_EX : pc_plus_4;
+                     Branch_Mispredict_EX ? Correct_Target_EX : 
+                     bpu_predicted_taken ? bpu_predicted_target : pc_plus_4;
+
+    generate
+        if (`ENABLE_MMU) begin : gen_i_mmu
+            mmu i_mmu (
+                .clk(clk),
+                .rst_n(rst_n),
+                .satp_en(csr_satp[0]),
+                .is_instruction(1'b1),
+                .is_write(1'b0),
+                .va(virt_pc),
+                .pa(physical_pc),
+                .tlb_miss(i_tlb_miss),
+                .page_fault(i_page_fault),
+                .tlb_update_en(tlb_update_en_pulse),
+                .tlb_update_vpn(csr_tlb_update_vpn),
+                .tlb_update_ppn(csr_tlb_update_ppn),
+                .tlb_update_r(csr_tlb_update_flags[0]),
+                .tlb_update_w(csr_tlb_update_flags[1]),
+                .tlb_update_x(csr_tlb_update_flags[2])
+            );
+        end else begin : gen_no_i_mmu
+            assign physical_pc = virt_pc;
+            assign i_tlb_miss = 0;
+            assign i_page_fault = 0;
+        end
+    endgenerate
+
+    assign pc = physical_pc;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            pc <= 0;
+            tlb_update_en_pulse <= 0;
+            virt_pc <= 0;
             IF_ID_pc <= 0;
             IF_ID_inst <= 32'd0;
+            IF_ID_predicted_taken <= 0;
+            IF_ID_predicted_target <= 0;
         end else if (!Stall_Pipeline) begin
+            tlb_update_en_pulse <= 0;
             if (!Stall_IF_ID) begin
-                pc <= pc_next;
-                IF_ID_pc <= pc;
+                virt_pc <= virt_pc_next;
+                IF_ID_pc <= virt_pc;
                 IF_ID_inst <= inst;
+                IF_ID_predicted_taken <= bpu_predicted_taken;
+                IF_ID_predicted_target <= bpu_predicted_target;
             end
             if (Flush) begin
                 IF_ID_inst <= 32'd0;
+                IF_ID_predicted_taken <= 0;
+                IF_ID_predicted_target <= 0;
             end
         end
     end
@@ -155,6 +251,7 @@ module aurora_x_core #(
     wire [2:0] Branch_Type_D;
     wire Ecall_D, Exret_D;
     wire VectorOp_D, VectorRegWrite_D, VectorMemRead_D, VectorMemWrite_D;
+    wire VectorMaskWe_D, VectorUseMask_D;
     wire [2:0] VALU_Op_D;
     
     decoder u_dec (
@@ -183,7 +280,9 @@ module aurora_x_core #(
         .VectorRegWrite(VectorRegWrite_D),
         .VectorMemRead(VectorMemRead_D),
         .VectorMemWrite(VectorMemWrite_D),
-        .VALU_Op(VALU_Op_D)
+        .VALU_Op(VALU_Op_D),
+        .VectorMaskWe(VectorMaskWe_D),
+        .VectorUseMask(VectorUseMask_D)
     );
 
     wire [63:0] read_data1_D, read_data2_D;
@@ -208,11 +307,14 @@ module aurora_x_core #(
             vector_register_file u_vrf (
                 .clk(clk),
                 .we(MEM_WB_VectorRegWrite),
+                .mask_we(MEM_WB_VectorMaskWe),
+                .use_mask(MEM_WB_VectorUseMask),
                 .rs1(rs1),
                 .rs2(rs2),
                 .rd_write(MEM_WB_rd),
                 .vd_read(rd),
                 .write_data(vwrite_data_W),
+                .mask_data(MEM_WB_Mask_Result),
                 .read_data1(vread_data1_D),
                 .read_data2(vread_data2_D),
                 .read_data_vd(vread_data_vd_D)
@@ -232,7 +334,7 @@ module aurora_x_core #(
         .rs2_D(rs2),
         .rd_E(ID_EX_rd),
         .MemRead_E(ID_EX_MemRead),
-        .Branch_Taken(Branch_Taken_EX || ID_EX_Ecall || ID_EX_Exret),
+        .Branch_Taken(Branch_Mispredict_EX || ID_EX_Ecall || ID_EX_Exret),
         .cache_stall(cache_stall),
         .Stall_IF_ID(Stall_IF_ID),
         .Stall_Pipeline(Stall_Pipeline),
@@ -259,6 +361,9 @@ module aurora_x_core #(
                 ID_EX_RegWrite <= 0; ID_EX_MemRead <= 0; ID_EX_MemWrite <= 0; ID_EX_Branch <= 0; ID_EX_Jump <= 0;
                 ID_EX_CSR_Write <= 0; ID_EX_CSR_Read <= 0; ID_EX_Ecall <= 0; ID_EX_Exret <= 0;
                 ID_EX_VectorOp <= 0; ID_EX_VectorRegWrite <= 0; ID_EX_VectorMemRead <= 0; ID_EX_VectorMemWrite <= 0;
+                ID_EX_VectorMaskWe <= 0; ID_EX_VectorUseMask <= 0;
+                ID_EX_predicted_taken <= 0;
+                ID_EX_predicted_target <= 0;
             end else begin
                 ID_EX_pc <= IF_ID_pc;
                 ID_EX_read_data1 <= read_data1_D;
@@ -289,7 +394,11 @@ module aurora_x_core #(
                 ID_EX_VectorRegWrite <= VectorRegWrite_D;
                 ID_EX_VectorMemRead <= VectorMemRead_D;
                 ID_EX_VectorMemWrite <= VectorMemWrite_D;
+                ID_EX_VectorMaskWe <= VectorMaskWe_D;
+                ID_EX_VectorUseMask <= VectorUseMask_D;
                 ID_EX_VALU_Op <= VALU_Op_D;
+                ID_EX_predicted_taken <= IF_ID_predicted_taken;
+                ID_EX_predicted_target <= IF_ID_predicted_target;
             end
         end
     end
@@ -340,6 +449,7 @@ module aurora_x_core #(
     // Vector ALU
     wire [2047:0] valu_in2 = ID_EX_ALUSrc_B ? {1984'd0, ID_EX_imm14_sext} : ID_EX_vread_data2;
     wire [2047:0] valu_result_E;
+    wire [63:0]   valu_mask_result_E;
     generate
         if (CORE_TYPE == 2) begin : gen_valu
             vector_alu u_valu (
@@ -347,10 +457,12 @@ module aurora_x_core #(
                 .B(valu_in2),
                 .C(ID_EX_vread_data_vd),
                 .VALU_Op(ID_EX_VALU_Op),
-                .Result(valu_result_E)
+                .Result(valu_result_E),
+                .Mask_Result(valu_mask_result_E)
             );
         end else begin : gen_no_valu
             assign valu_result_E = 2048'd0;
+            assign valu_mask_result_E = 64'd0;
         end
     endgenerate
 
@@ -377,14 +489,32 @@ module aurora_x_core #(
             default: Branch_Cond_Met = 0;
         endcase
     end
+    wire Branch_Taken_EX;
+    wire [63:0] Branch_Target_EX;
+    
     assign Branch_Taken_EX = (ID_EX_Branch && Branch_Cond_Met) || ID_EX_Jump;
     assign Branch_Target_EX = ID_EX_Jump ? (ID_EX_pc + (ID_EX_imm19_sext << 2)) : (ID_EX_pc + (ID_EX_imm14_sext << 2));
+
+    // BPU Validation
+    assign Branch_Mispredict_EX = (ID_EX_Branch || ID_EX_Jump) && 
+        ((ID_EX_predicted_taken != Branch_Taken_EX) || 
+         (ID_EX_predicted_taken && (ID_EX_predicted_target != Branch_Target_EX)));
+         
+    assign Correct_Target_EX = Branch_Taken_EX ? Branch_Target_EX : (ID_EX_pc + 4);
+
+    // BPU Updates
+    assign bpu_update_en = (ID_EX_Branch || ID_EX_Jump) && !Stall_Pipeline;
+    assign bpu_update_pc = ID_EX_pc;
+    assign bpu_update_taken = Branch_Taken_EX;
+    assign bpu_update_target = Branch_Target_EX;
+    assign bpu_update_is_branch = ID_EX_Branch || ID_EX_Jump;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             EX_MEM_RegWrite <= 0; EX_MEM_MemRead <= 0; EX_MEM_MemWrite <= 0;
             EX_MEM_CSR_Write <= 0; EX_MEM_CSR_Read <= 0;
             EX_MEM_VectorRegWrite <= 0; EX_MEM_VectorMemRead <= 0; EX_MEM_VectorMemWrite <= 0;
+            EX_MEM_VectorMaskWe <= 0; EX_MEM_VectorUseMask <= 0;
         end else if (!Stall_Pipeline) begin
             EX_MEM_pc <= ID_EX_pc;
             EX_MEM_alu_result <= alu_result_E;
@@ -401,17 +531,49 @@ module aurora_x_core #(
             EX_MEM_VectorRegWrite <= ID_EX_VectorRegWrite;
             EX_MEM_VectorMemRead <= ID_EX_VectorMemRead;
             EX_MEM_VectorMemWrite <= ID_EX_VectorMemWrite;
+            EX_MEM_VectorMaskWe <= ID_EX_VectorMaskWe;
+            EX_MEM_VectorUseMask <= ID_EX_VectorUseMask;
+            EX_MEM_Mask_Result <= valu_mask_result_E;
         end
     end
 
     // ------------------------------------------------------------------------
     // STAGE 4: MEMORY (MEM)
     // ------------------------------------------------------------------------
+    wire [63:0] physical_data_addr;
+    wire d_tlb_miss, d_page_fault;
+
+    generate
+        if (`ENABLE_MMU) begin : gen_d_mmu
+            mmu d_mmu (
+                .clk(clk),
+                .rst_n(rst_n),
+                .satp_en(csr_satp[0]),
+                .is_instruction(1'b0),
+                .is_write(EX_MEM_MemWrite || EX_MEM_VectorMemWrite),
+                .va(EX_MEM_alu_result),
+                .pa(physical_data_addr),
+                .tlb_miss(d_tlb_miss),
+                .page_fault(d_page_fault),
+                .tlb_update_en(tlb_update_en_pulse),
+                .tlb_update_vpn(csr_tlb_update_vpn),
+                .tlb_update_ppn(csr_tlb_update_ppn),
+                .tlb_update_r(csr_tlb_update_flags[0]),
+                .tlb_update_w(csr_tlb_update_flags[1]),
+                .tlb_update_x(csr_tlb_update_flags[2])
+            );
+        end else begin : gen_no_d_mmu
+            assign physical_data_addr = EX_MEM_alu_result;
+            assign d_tlb_miss = 0;
+            assign d_page_fault = 0;
+        end
+    endgenerate
+
     wire [63:0] cache_read_data;
     l1_cache u_cache (
         .clk(clk),
         .rst_n(rst_n),
-        .cpu_addr(EX_MEM_alu_result),
+        .cpu_addr(physical_data_addr),
         .cpu_write_data(EX_MEM_write_data),
         .cpu_we(EX_MEM_MemWrite || EX_MEM_VectorMemWrite),
         .cpu_re(EX_MEM_MemRead || EX_MEM_VectorMemRead),
@@ -433,6 +595,7 @@ module aurora_x_core #(
             MEM_WB_CSR_Read <= 0;
             MEM_WB_VectorRegWrite <= 0;
             MEM_WB_VectorMemRead <= 0;
+            MEM_WB_VectorMaskWe <= 0;
         end else if (!Stall_Pipeline) begin
             MEM_WB_pc <= EX_MEM_pc;
             MEM_WB_alu_result <= EX_MEM_alu_result;
@@ -445,6 +608,9 @@ module aurora_x_core #(
             MEM_WB_CSR_Read <= EX_MEM_CSR_Read;
             MEM_WB_VectorRegWrite <= EX_MEM_VectorRegWrite;
             MEM_WB_VectorMemRead <= EX_MEM_VectorMemRead;
+            MEM_WB_VectorMaskWe <= EX_MEM_VectorMaskWe;
+            MEM_WB_VectorUseMask <= EX_MEM_VectorUseMask;
+            MEM_WB_Mask_Result <= EX_MEM_Mask_Result;
         end
     end
 
