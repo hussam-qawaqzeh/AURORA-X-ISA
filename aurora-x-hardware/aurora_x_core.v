@@ -125,9 +125,7 @@ module aurora_x_core #(
     wire take_interrupt;
     wire interrupt_pending;
     
-    always @(*) begin
-        csr_mip[0] = 64'd0; csr_mip[1] = 64'd0;
-    end
+    // Removed empty always @(*) block for csr_mip to prevent iverilog hang
     
     wire is_ext_intr_T0   = ext_intr & csr_mie[0][11];
     wire is_timer_intr_T0 = timer_intr & csr_mie[0][7];
@@ -160,6 +158,8 @@ module aurora_x_core #(
         csr_mip[0] = 64'd0; csr_mip[1] = 64'd0;
         csr_epc[0] = 64'd0; csr_epc[1] = 64'd0;
         csr_trap_handler[0] = 64'd0; csr_trap_handler[1] = 64'd0;
+        csr_satp = 64'd0;
+        csr_tlb_update_flags = 4'd0;
     end
 
     always @(posedge clk or negedge rst_n) begin
@@ -172,6 +172,8 @@ module aurora_x_core #(
             csr_mie[0] <= 64'd0; csr_mie[1] <= 64'd0;
             csr_epc[0] <= 64'd0; csr_epc[1] <= 64'd0;
             csr_trap_handler[0] <= 64'd0; csr_trap_handler[1] <= 64'd0;
+            csr_satp <= 64'd0;
+            csr_tlb_update_flags <= 4'd0;
         end else begin
             if (EX_MEM_CSR_Write) begin
                 case (EX_MEM_csr_addr)
@@ -194,6 +196,16 @@ module aurora_x_core #(
                 csr_trap_cause[ID_EX_thread_id] <= 64'd8; // Env call from User mode
                 csr_mstatus[ID_EX_thread_id][7] <= csr_mstatus[ID_EX_thread_id][3]; // MPIE = MIE
                 csr_mstatus[ID_EX_thread_id][3] <= 1'b0;           // MIE = 0
+            end else if ((i_tlb_miss || i_page_fault) && !Stall_Pipeline) begin
+                csr_epc[fetch_thread_id] <= virt_pc[fetch_thread_id];
+                csr_trap_cause[fetch_thread_id] <= 64'd12; // Instruction page fault
+                csr_mstatus[fetch_thread_id][7] <= csr_mstatus[fetch_thread_id][3];
+                csr_mstatus[fetch_thread_id][3] <= 1'b0;
+            end else if ((d_tlb_miss || d_page_fault) && !Stall_Pipeline) begin
+                csr_epc[EX_MEM_thread_id] <= EX_MEM_alu_result;
+                csr_trap_cause[EX_MEM_thread_id] <= 64'd13; // Load/Store page fault
+                csr_mstatus[EX_MEM_thread_id][7] <= csr_mstatus[EX_MEM_thread_id][3];
+                csr_mstatus[EX_MEM_thread_id][3] <= 1'b0;
             end else if (take_interrupt && !Stall_Pipeline) begin
                 csr_epc[IF_ID_thread_id] <= IF_ID_pc;
                 if (csr_mip[0][11] && csr_mie[0][11]) csr_trap_cause[0] <= 64'h800000000000000B;
@@ -293,7 +305,15 @@ module aurora_x_core #(
             fetch_thread_id <= 1'b0;
         end else begin
             if (!Stall_IF_ID) begin
-                if (take_interrupt_T0 && fetch_thread_id == 0) begin
+                if ((i_tlb_miss || i_page_fault) && fetch_thread_id == 0) begin
+                    virt_pc[0] <= csr_trap_handler[0];
+                end else if ((i_tlb_miss || i_page_fault) && fetch_thread_id == 1) begin
+                    virt_pc[1] <= csr_trap_handler[1];
+                end else if ((d_tlb_miss || d_page_fault) && EX_MEM_thread_id == 0) begin
+                    virt_pc[0] <= csr_trap_handler[0];
+                end else if ((d_tlb_miss || d_page_fault) && EX_MEM_thread_id == 1) begin
+                    virt_pc[1] <= csr_trap_handler[1];
+                end else if (take_interrupt_T0 && fetch_thread_id == 0) begin
                     virt_pc[0] <= csr_trap_handler[0];
                 end else if (take_interrupt_T1 && fetch_thread_id == 1) begin
                     virt_pc[1] <= csr_trap_handler[1];
@@ -600,6 +620,9 @@ module aurora_x_core #(
         .RegWrite_M(EX_MEM_RegWrite),
         .rd_W(MEM_WB_rd),
         .RegWrite_W(MEM_WB_RegWrite),
+        .thread_id_E(ID_EX_thread_id),
+        .thread_id_M(EX_MEM_thread_id),
+        .thread_id_W(MEM_WB_thread_id),
         .ForwardA(ForwardA),
         .ForwardB(ForwardB)
     );

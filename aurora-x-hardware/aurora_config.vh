@@ -15,13 +15,13 @@
 // Total cores in the SoC = NUM_P_CORES + NUM_E_CORES + NUM_AG_CORES
 // CAUTION: The ax_bus_scalable arbitration logic dynamically scales based on this.
 
-`define NUM_P_CORES  3   // Performance Cores (Full Pipeline, No Vector SIMT)
-`define NUM_E_CORES  3   // Efficiency Cores (Simplified Pipeline, Low Power)
-`define NUM_AG_CORES 3   // AG Cores (AI & Graphics, Full Pipeline + 2048-bit Vector SIMT + Masking)
+`define NUM_P_CORES  1   // Performance Cores (Full Pipeline, No Vector SIMT)
+`define NUM_E_CORES  1   // Efficiency Cores (Simplified Pipeline, Low Power)
+`define NUM_AG_CORES 0   // AG Cores (AI & Graphics, Full Pipeline + 2048-bit Vector SIMT + Masking)
 
 // Total cores (Helper macro - do not edit manually if possible, but Verilog doesn't 
 // allow complex macro math in some contexts, so we define it manually for array sizes)
-`define TOTAL_CORES 9
+`define TOTAL_CORES 2
 
 // ----------------------------------------------------------------------------
 // Clock Frequencies (Hardware Dividers)
@@ -44,7 +44,7 @@
 // ----------------------------------------------------------------------------
 // Memory Subsystem
 // ----------------------------------------------------------------------------
-`define ENABLE_L3_CACHE 1         // 1 to enable L3 cache, 0 to disable
+`define ENABLE_L3_CACHE 0         // 1 to enable L3 cache, 0 to disable
 `define ENABLE_3D_VCACHE 0        // 1 to use 3D V-Cache sizes (requires L3 enabled)
 `define ENABLE_MMU 1              // 1 to enable Memory Management Unit (Virtual Memory)
 

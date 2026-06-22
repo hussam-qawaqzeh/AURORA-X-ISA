@@ -90,7 +90,13 @@ module ax_bus_scalable (
     wire [31:0] grant_idx = (serving) ? current_master : 
                             (m_req[0] ? 0 : 
                             (m_req[1] ? 1 : 
-                            (`TOTAL_CORES > 2 && m_req[2] ? 2 : 0))); // Fast combinational grant
+                            (m_req[2] ? 2 : 
+                            (m_req[3] ? 3 : 
+                            (m_req[4] ? 4 : 
+                            (m_req[5] ? 5 : 
+                            (m_req[6] ? 6 : 
+                            (m_req[7] ? 7 : 
+                            (m_req[8] ? 8 : 0))))))))); // Fast combinational grant
 
     wire [63:0] active_addr = m_addr[(grant_idx*64) +: 64];
     wire is_clint = (active_addr >= 64'h02000000 && active_addr < 64'h02010000);
