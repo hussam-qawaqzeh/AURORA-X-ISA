@@ -35,7 +35,7 @@ fn main() {
     file.read_to_end(&mut data).expect("Failed to read binary");
 
     let mut cpu = cpu::Cpu::new();
-    let mut mem = memory::Memory::new(1024 * 1024); // 1MB RAM for now
+    let mut mem = memory::Memory::new(64 * 1024 * 1024); // 64MB RAM
 
     // Load binary at offset 0
     mem.load_binary(&data, 0);

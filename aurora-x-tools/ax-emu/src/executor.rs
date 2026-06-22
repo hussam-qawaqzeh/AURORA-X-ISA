@@ -225,11 +225,13 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
             } else {
                 match translate(cpu, mem, vaddr, false) {
                     Ok(paddr) => {
-                        let mut chunk = vec![0u8; vl as usize];
-                        for i in 0..(vl as usize) {
-                            chunk[i] = (mem.read_u64(paddr as usize + i) & 0xFF) as u8;
+                        let p = paddr as usize;
+                        let end = p + (vl as usize);
+                        if end <= mem.ram.len() {
+                            cpu.vr[dec.rd][0..vl as usize].copy_from_slice(&mem.ram[p..end]);
+                        } else {
+                            panic!("VLOAD out of bounds: paddr {} + vl {} > mem size {}", p, vl, mem.ram.len());
                         }
-                        cpu.vr[dec.rd][0..vl as usize].copy_from_slice(&chunk);
                     }
                     Err(cause) => {
                         let handler = cpu.read_csr(0x020);

@@ -6,6 +6,7 @@ enum Inst {
     Addi(u8, u8, i32),
     Add(u8, u8, u8),
     Sub(u8, u8, u8),
+    Shr(u8, u8, u8),
     Branch(u8, u8, String), // BEQ
     Jump(String),
     CsrWrite(u8, u16),
@@ -22,7 +23,7 @@ impl CodeGen {
     pub fn new() -> Self {
         Self {
             var_to_reg: HashMap::new(),
-            next_reg: 1, // R1 to R20 for locals
+            next_reg: 1, // R1 to R28 for locals
             label_count: 0,
         }
     }
@@ -38,7 +39,7 @@ impl CodeGen {
         } else {
             let r = self.next_reg;
             self.next_reg += 1;
-            if self.next_reg > 20 { panic!("Out of registers!"); }
+            if self.next_reg > 28 { panic!("Out of registers!"); }
             self.var_to_reg.insert(name.to_string(), r);
             r
         }
@@ -183,8 +184,22 @@ impl CodeGen {
                         asm.push(Inst::Addi(res_reg, 0, 0)); // false
                         asm.push(Inst::Label(end_label));
                     }
-                    // Lt/Gt not natively supported by base branch!
-                    // Let's implement Lt/Gt using Sub and checking sign bit in software, or just restrict our tests to Eq/Neq
+                    Op::Lt => {
+                        // left < right  =>  left - right < 0
+                        // res_reg = (left - right) >> 63
+                        asm.push(Inst::Sub(res_reg, safe_l, r_reg));
+                        let shift_amt_reg = 29; // temp reg for shift amount
+                        asm.push(Inst::Addi(shift_amt_reg, 0, 63));
+                        asm.push(Inst::Shr(res_reg, res_reg, shift_amt_reg));
+                    }
+                    Op::Gt => {
+                        // left > right  =>  right - left < 0
+                        // res_reg = (right - left) >> 63
+                        asm.push(Inst::Sub(res_reg, r_reg, safe_l));
+                        let shift_amt_reg = 29; // temp reg for shift amount
+                        asm.push(Inst::Addi(shift_amt_reg, 0, 63));
+                        asm.push(Inst::Shr(res_reg, res_reg, shift_amt_reg));
+                    }
                     _ => panic!("Unsupported operator {:?}", op),
                 }
                 res_reg
@@ -225,6 +240,10 @@ impl CodeGen {
                 }
                 Inst::Sub(rd, rs1, rs2) => {
                     resolved.push_str(&format!("    SUB.X R{}, R{}, R{}\n", rd, rs1, rs2));
+                    pc += 1;
+                }
+                Inst::Shr(rd, rs1, rs2) => {
+                    resolved.push_str(&format!("    SHR R{}, R{}, R{}\n", rd, rs1, rs2));
                     pc += 1;
                 }
                 Inst::Branch(rs1, rs2, label) => {
