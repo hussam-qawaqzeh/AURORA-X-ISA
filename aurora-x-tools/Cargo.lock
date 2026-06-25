@@ -16,6 +16,9 @@ version = "0.1.0"
 [[package]]
 name = "ax-disasm"
 version = "0.1.0"
+dependencies = [
+ "ax-emu",
+]
 
 [[package]]
 name = "ax-emu"

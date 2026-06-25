@@ -1,7 +1,7 @@
-mod cpu;
-mod memory;
-mod decoder;
-mod executor;
+use ax_emu::cpu;
+use ax_emu::memory;
+use ax_emu::decoder;
+use ax_emu::executor;
 
 use std::env;
 use std::fs::File;
@@ -44,33 +44,33 @@ fn main() {
     // AURORA-X UNIVERSAL TESTBENCH MEMORY SETUP
     // ==========================================
 
-    // --- Demo 1: Exception/Syscall Setup ---
-    // (Removed mem.write_u64(100, 64) because it corrupts Demo 4's instructions)
-    cpu.write_reg(10, 0); // Accumulator for the exception test
+    if test_mode {
+        // --- Demo 1: Exception/Syscall Setup ---
+        // (Removed mem.write_u64(100, 64) because it corrupts Demo 4's instructions)
+        cpu.write_reg(10, 0); // Accumulator for the exception test
 
-    // --- Demo 2 & 3: Vector & AI Setup ---
-    // R6 = Base Address for both tests
-    cpu.write_reg(6, 1000);
-    // R5 = Vector Length or Exception Adder (16 bytes = 4 integers, OR 16 for addition)
-    cpu.write_reg(5, 16);
-    
-    // X = [1, 2, 3, 4]
-    mem.write_u64(1000, 1 | (2u64 << 32));
-    mem.write_u64(1008, 3 | (4u64 << 32));
-    
-    // C = [3, 3, 3, 3]
-    mem.write_u64(1016, 3 | (3u64 << 32));
-    mem.write_u64(1024, 3 | (3u64 << 32));
+        // --- Demo 2 & 3: Vector & AI Setup ---
+        // R6 = Base Address for both tests
+        cpu.write_reg(6, 1000);
+        // R5 = Vector Length or Exception Adder (16 bytes = 4 integers, OR 16 for addition)
+        cpu.write_reg(5, 16);
+        
+        // X = [1, 2, 3, 4]
+        mem.write_u64(1000, 1 | (2u64 << 32));
+        mem.write_u64(1008, 3 | (4u64 << 32));
+        
+        // C = [3, 3, 3, 3]
+        mem.write_u64(1016, 3 | (3u64 << 32));
+        mem.write_u64(1024, 3 | (3u64 << 32));
 
-    // B = [2, 2, 2, 2]
-    mem.write_u64(1032, 2 | (2u64 << 32));
-    mem.write_u64(1040, 2 | (2u64 << 32));
-    
-    // A = [5, 5, 5, 5]
-    mem.write_u64(1048, 5 | (5u64 << 32));
-    mem.write_u64(1056, 5 | (5u64 << 32));
-
-    if !test_mode {
+        // B = [2, 2, 2, 2]
+        mem.write_u64(1032, 2 | (2u64 << 32));
+        mem.write_u64(1040, 2 | (2u64 << 32));
+        
+        // A = [5, 5, 5, 5]
+        mem.write_u64(1048, 5 | (5u64 << 32));
+        mem.write_u64(1056, 5 | (5u64 << 32));
+    } else {
         println!("Starting execution...");
     }
 

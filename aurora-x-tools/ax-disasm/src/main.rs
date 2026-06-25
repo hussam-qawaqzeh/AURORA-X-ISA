@@ -1,50 +1,7 @@
 use std::env;
 use std::fs::File;
 use std::io::Read;
-
-pub struct DecodedInstruction {
-    pub opcode: u8,
-    pub rd: usize,
-    pub rs1: usize,
-    pub rs2: usize,
-    pub imm14: i16,
-    pub imm19: i32,
-    pub csr_addr: u16,
-    pub funct9: u16,
-}
-
-pub fn decode(inst: u32) -> DecodedInstruction {
-    let opcode = ((inst >> 24) & 0xFF) as u8;
-    let rd = ((inst >> 19) & 0x1F) as usize;
-    let rs1 = ((inst >> 14) & 0x1F) as usize;
-    let rs2 = ((inst >> 9) & 0x1F) as usize;
-    
-    let mut imm14_raw = (inst & 0x3FFF) as u16;
-    if (imm14_raw & 0x2000) != 0 {
-        imm14_raw |= 0xC000;
-    }
-    let imm14 = imm14_raw as i16;
-    
-    let mut imm19_raw = (inst & 0x7FFFF) as i32;
-    if (imm19_raw & 0x40000) != 0 {
-        imm19_raw |= -0x80000;
-    }
-    let imm19 = imm19_raw;
-    
-    let csr_addr = ((inst >> 7) & 0xFFF) as u16;
-    let funct9 = (inst & 0x1FF) as u16;
-
-    DecodedInstruction {
-        opcode,
-        rd,
-        rs1,
-        rs2,
-        imm14,
-        imm19,
-        csr_addr,
-        funct9,
-    }
-}
+use ax_emu::decoder::decode;
 
 fn disassemble(inst: u32, _pc: usize) -> String {
     let dec = decode(inst);
@@ -52,14 +9,23 @@ fn disassemble(inst: u32, _pc: usize) -> String {
         0x01 => {
             let funct9 = inst & 0x1FF;
             if funct9 == 0 { format!("ADD.X R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2) }
-            else { format!("SUB.X R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2) }
+            else if funct9 == 1 { format!("SUB.X R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2) }
+            else { format!("UNKNOWN.01 R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2) }
         },
         0x02 => format!("AND R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2),
         0x03 => format!("OR R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2),
         0x04 => format!("XOR R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2),
         0x05 => format!("SHL R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2),
-        0x06 => format!("SHR R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2),
+        0x06 => {
+            let funct9 = inst & 0x1FF;
+            if funct9 == 1 { format!("SRA R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2) }
+            else { format!("SHR R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2) }
+        },
+        0x07 => format!("MUL.X R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2),
+        0x08 => format!("DIV.X R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2),
         0x09 => format!("ADDI R{}, R{}, {}", dec.rd, dec.rs1, dec.imm14),
+        0x0A => format!("SLT R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2),
+        0x0B => format!("SLTU R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2),
         0x21 => {
             format!("LOAD.X R{}, [R{}{}]", dec.rd, dec.rs1, if dec.imm14 != 0 { format!("{:+}", dec.imm14) } else { "".to_string() })
         }
@@ -68,7 +34,22 @@ fn disassemble(inst: u32, _pc: usize) -> String {
             format!("STORE.X R{}, [R{}{}]", dec.rs1, dec.rd, if dec.imm14 != 0 { format!("{:+}", dec.imm14) } else { "".to_string() })
         }
         0x40 => {
-            format!("BRANCH.X R{}, R{}, {}", dec.rd, dec.rs1, dec.imm14)
+            format!("BEQ R{}, R{}, {}", dec.rd, dec.rs1, dec.imm14)
+        }
+        0x46 => {
+            format!("BNE R{}, R{}, {}", dec.rd, dec.rs1, dec.imm14)
+        }
+        0x47 => {
+            format!("BLT R{}, R{}, {}", dec.rd, dec.rs1, dec.imm14)
+        }
+        0x48 => {
+            format!("BGE R{}, R{}, {}", dec.rd, dec.rs1, dec.imm14)
+        }
+        0x49 => {
+            format!("BLTU R{}, R{}, {}", dec.rd, dec.rs1, dec.imm14)
+        }
+        0x4A => {
+            format!("BGEU R{}, R{}, {}", dec.rd, dec.rs1, dec.imm14)
         }
         0x41 => {
             format!("JUMP.X R{}, {}", dec.rd, dec.imm19)
@@ -85,6 +66,9 @@ fn disassemble(inst: u32, _pc: usize) -> String {
         }
         0x45 => {
             format!("EXRET")
+        }
+        0x54 => {
+            format!("VCMP.GT V{}, V{}", dec.rs1, dec.rs2)
         }
         0x60 => {
             format!("VLOAD V{}, [R{}{}]", dec.rd, dec.rs1, if dec.imm14 != 0 { format!("{:+}", dec.imm14) } else { "".to_string() })

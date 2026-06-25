@@ -69,6 +69,12 @@ pub fn parse_line(line: &str, labels: &HashMap<String, u32>, current_pc: u32) ->
                 return Some(Instruction::Shr { rd, rs1, rs2 });
             }
         }
+        "SRA" => {
+            if parts.len() >= 4 {
+                let rd = Reg::parse(parts[1])?; let rs1 = Reg::parse(parts[2])?; let rs2 = Reg::parse(parts[3])?;
+                return Some(Instruction::Sra { rd, rs1, rs2 });
+            }
+        }
         "LOAD.X" => {
             if parts.len() >= 4 {
                 let rd = Reg::parse(parts[1])?;
@@ -109,14 +115,14 @@ pub fn parse_line(line: &str, labels: &HashMap<String, u32>, current_pc: u32) ->
                 }
             }
         }
-        "BNE" | "BRANCH.X" => {
+        "BEQ" | "BRANCH.X" => {
             if parts.len() >= 4 {
                 let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; 
                 let imm = parse_branch_target(parts[3], labels, current_pc)?;
                 return Some(Instruction::BranchX { rs1, rs2, imm, btype: 0 }); // 0x40
             }
         }
-        "BEQ" => {
+        "BNE" => {
             if parts.len() >= 4 {
                 let rs1 = Reg::parse(parts[1])?; let rs2 = Reg::parse(parts[2])?; 
                 let imm = parse_branch_target(parts[3], labels, current_pc)?;
@@ -264,17 +270,24 @@ pub fn parse_line(line: &str, labels: &HashMap<String, u32>, current_pc: u32) ->
                 return Some(Instruction::VPerm { vd, vs1, vs2 });
             }
         }
+        "VCMP.GT" => {
+            if parts.len() >= 3 {
+                let vs1 = Reg::parse(parts[1])?;
+                let vs2 = Reg::parse(parts[2])?;
+                return Some(Instruction::VCmpGt { vs1, vs2 });
+            }
+        }
         _ => {}
     }
     
     None
 }
 
-fn parse_hex_or_int(s: &str) -> Option<i16> {
+fn parse_hex_or_int(s: &str) -> Option<i32> {
     let res = if s.starts_with("0x") || s.starts_with("0X") {
-        i16::from_str_radix(&s[2..], 16).ok()
+        i32::from_str_radix(&s[2..], 16).ok()
     } else {
-        s.parse::<i16>().ok()
+        s.parse::<i32>().ok()
     };
     if res.is_none() {
         println!("Failed to parse imm: '{}'", s);
@@ -287,7 +300,7 @@ fn parse_branch_target(s: &str, labels: &HashMap<String, u32>, current_pc: u32) 
         let diff = target_pc as i32 - current_pc as i32;
         Some((diff / 4) as i16)
     } else {
-        parse_hex_or_int(s)
+        parse_hex_or_int(s).map(|v| v as i16)
     }
 }
 

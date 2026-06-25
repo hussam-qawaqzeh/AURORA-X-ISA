@@ -19,5 +19,5 @@ int main() {
     // Output should be 55 (the 10th Fibonacci number)
     print(a);
     
-    return 0;
+    return 1;
 }

@@ -6,6 +6,7 @@ pub struct Cpu {
     pub pc: u64,
     pub _pl: u8, // Privilege Level (0 to 3)
     pub csr: HashMap<u16, u64>,
+    pub vmask: u64, // 64-bit vector mask register
 }
 
 impl Cpu {
@@ -16,6 +17,7 @@ impl Cpu {
             pc: 0,
             _pl: 3, // Start in Machine Mode
             csr: HashMap::new(),
+            vmask: 0xFFFFFFFFFFFFFFFF,
         }
     }
 

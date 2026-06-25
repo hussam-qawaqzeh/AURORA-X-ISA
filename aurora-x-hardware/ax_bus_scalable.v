@@ -87,24 +87,31 @@ module ax_bus_scalable (
         end
     end
 
-    wire [31:0] grant_idx = (serving) ? current_master : 
-                            (m_req[0] ? 0 : 
-                            (m_req[1] ? 1 : 
-                            (m_req[2] ? 2 : 
-                            (m_req[3] ? 3 : 
-                            (m_req[4] ? 4 : 
-                            (m_req[5] ? 5 : 
-                            (m_req[6] ? 6 : 
-                            (m_req[7] ? 7 : 
-                            (m_req[8] ? 8 : 0))))))))); // Fast combinational grant
+    reg [31:0] grant_idx_comb;
+    integer j;
+    always @(*) begin
+        if (serving) begin
+            grant_idx_comb = current_master;
+        end else begin
+            grant_idx_comb = 0;
+            for (j = `TOTAL_CORES-1; j >= 0; j = j - 1) begin
+                if (m_req[j]) begin
+                    grant_idx_comb = j;
+                end
+            end
+        end
+    end
+    
+    wire [31:0] grant_idx = grant_idx_comb;
 
     wire [63:0] active_addr = m_addr[(grant_idx*64) +: 64];
-    wire is_clint = (active_addr >= 64'h02000000 && active_addr < 64'h02010000);
-    wire is_uart  = (active_addr >= 64'h10000000 && active_addr < 64'h10001000);
-    wire is_gpio  = (active_addr >= 64'h20000000 && active_addr < 64'h20001000);
-    wire is_spi   = (active_addr >= 64'h30000000 && active_addr < 64'h30001000);
+    wire addr_valid = (^active_addr === 1'bx) ? 1'b0 : 1'b1;
+    wire is_clint = addr_valid && (active_addr >= 64'h02000000 && active_addr < 64'h02010000);
+    wire is_uart  = addr_valid && (active_addr >= 64'h10000000 && active_addr < 64'h10001000);
+    wire is_gpio  = addr_valid && (active_addr >= 64'h20000000 && active_addr < 64'h20001000);
+    wire is_spi   = addr_valid && (active_addr >= 64'h30000000 && active_addr < 64'h30001000);
     
-    wire is_mem = (!is_clint && !is_uart && !is_gpio && !is_spi);
+    wire is_mem = addr_valid && (!is_clint && !is_uart && !is_gpio && !is_spi);
 
     // MUXing inputs to Slaves
     assign s0_addr       = active_addr;

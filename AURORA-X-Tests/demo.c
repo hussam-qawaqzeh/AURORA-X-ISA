@@ -15,5 +15,5 @@ int main() {
     // Output should be 55
     print(sum);
     
-    return 0;
+    return 1;
 }

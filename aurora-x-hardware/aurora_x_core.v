@@ -125,7 +125,15 @@ module aurora_x_core #(
     wire take_interrupt;
     wire interrupt_pending;
     
-    // Removed empty always @(*) block for csr_mip to prevent iverilog hang
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            csr_mip[0] <= 64'd0;
+            csr_mip[1] <= 64'd0;
+        end else begin
+            csr_mip[0] <= {52'd0, ext_intr, 3'd0, timer_intr, 3'd0, sw_intr, 3'd0};
+            csr_mip[1] <= {52'd0, ext_intr, 3'd0, timer_intr, 3'd0, sw_intr, 3'd0};
+        end
+    end
     
     wire is_ext_intr_T0   = ext_intr & csr_mie[0][11];
     wire is_timer_intr_T0 = timer_intr & csr_mie[0][7];
@@ -164,9 +172,6 @@ module aurora_x_core #(
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            virt_pc[0] <= 64'h00000000;
-            virt_pc[1] <= 64'h00000000;
-            fetch_thread_id <= 1'b0;
             csr_mstatus[0] <= 64'h00000008;
             csr_mstatus[1] <= 64'h00000008;
             csr_mie[0] <= 64'd0; csr_mie[1] <= 64'd0;
@@ -174,6 +179,9 @@ module aurora_x_core #(
             csr_trap_handler[0] <= 64'd0; csr_trap_handler[1] <= 64'd0;
             csr_satp <= 64'd0;
             csr_tlb_update_flags <= 4'd0;
+            test_status_reg <= 64'd0;
+            csr_trap_cause[0] <= 64'd0;
+            csr_trap_cause[1] <= 64'd0;
         end else begin
             if (EX_MEM_CSR_Write) begin
                 case (EX_MEM_csr_addr)
@@ -304,30 +312,45 @@ module aurora_x_core #(
             virt_pc[1] <= 64'h00000000;
             fetch_thread_id <= 1'b0;
         end else begin
-            if (!Stall_IF_ID) begin
+            if (!Stall_IF_ID && !Stall_Pipeline) begin
+                // Update virt_pc[0]
                 if ((i_tlb_miss || i_page_fault) && fetch_thread_id == 0) begin
                     virt_pc[0] <= csr_trap_handler[0];
-                end else if ((i_tlb_miss || i_page_fault) && fetch_thread_id == 1) begin
-                    virt_pc[1] <= csr_trap_handler[1];
                 end else if ((d_tlb_miss || d_page_fault) && EX_MEM_thread_id == 0) begin
                     virt_pc[0] <= csr_trap_handler[0];
-                end else if ((d_tlb_miss || d_page_fault) && EX_MEM_thread_id == 1) begin
-                    virt_pc[1] <= csr_trap_handler[1];
                 end else if (take_interrupt_T0 && fetch_thread_id == 0) begin
                     virt_pc[0] <= csr_trap_handler[0];
+                end else if (is_exret_T0) begin
+                    virt_pc[0] <= csr_epc[0];
+                end else if (Branch_Taken_EX && ID_EX_thread_id == 0) begin
+                    virt_pc[0] <= Branch_Target_EX;
+                end else if (fetch_thread_id == 0) begin
+                    if (bpu_predicted_taken) begin
+                        virt_pc[0] <= bpu_predicted_target;
+                    end else begin
+                        virt_pc[0] <= pc_plus_4;
+                    end
+                end
+
+                // Update virt_pc[1]
+                if ((i_tlb_miss || i_page_fault) && fetch_thread_id == 1) begin
+                    virt_pc[1] <= csr_trap_handler[1];
+                end else if ((d_tlb_miss || d_page_fault) && EX_MEM_thread_id == 1) begin
+                    virt_pc[1] <= csr_trap_handler[1];
                 end else if (take_interrupt_T1 && fetch_thread_id == 1) begin
                     virt_pc[1] <= csr_trap_handler[1];
-                end else if (is_exret_T0 && fetch_thread_id == 0) begin
-                    virt_pc[0] <= csr_epc[0];
-                end else if (is_exret_T1 && fetch_thread_id == 1) begin
+                end else if (is_exret_T1) begin
                     virt_pc[1] <= csr_epc[1];
-                end else if (Branch_Taken_EX && ID_EX_thread_id == fetch_thread_id) begin
-                    virt_pc[fetch_thread_id] <= Branch_Target_EX;
-                end else if (bpu_predicted_taken) begin
-                    virt_pc[fetch_thread_id] <= bpu_predicted_target;
-                end else begin
-                    virt_pc[fetch_thread_id] <= pc_plus_4;
+                end else if (Branch_Taken_EX && ID_EX_thread_id == 1) begin
+                    virt_pc[1] <= Branch_Target_EX;
+                end else if (fetch_thread_id == 1) begin
+                    if (bpu_predicted_taken) begin
+                        virt_pc[1] <= bpu_predicted_target;
+                    end else begin
+                        virt_pc[1] <= pc_plus_4;
+                    end
                 end
+
                 fetch_thread_id <= ~fetch_thread_id;
             end
         end
@@ -349,7 +372,7 @@ module aurora_x_core #(
                 IF_ID_predicted_taken <= bpu_predicted_taken;
                 IF_ID_predicted_target <= bpu_predicted_target;
             end
-            if (Flush) begin
+            if (Flush && (ID_EX_thread_id == fetch_thread_id)) begin
                 IF_ID_inst <= 32'd0;
                 IF_ID_predicted_taken <= 0;
                 IF_ID_predicted_target <= 0;
@@ -487,8 +510,9 @@ module aurora_x_core #(
             ID_EX_RegWrite <= 0; ID_EX_MemRead <= 0; ID_EX_MemWrite <= 0; ID_EX_Branch <= 0; ID_EX_Jump <= 0;
             ID_EX_CSR_Write <= 0; ID_EX_CSR_Read <= 0; ID_EX_Ecall <= 0; ID_EX_Exret <= 0;
             ID_EX_VectorOp <= 0; ID_EX_VectorRegWrite <= 0; ID_EX_VectorMemRead <= 0; ID_EX_VectorMemWrite <= 0;
+            ID_EX_thread_id <= 1'b0;
         end else if (!Stall_Pipeline) begin
-            if (Stall_IF_ID || Flush) begin
+            if (Stall_IF_ID || (Flush && (ID_EX_thread_id == IF_ID_thread_id))) begin
                 ID_EX_RegWrite <= 0; ID_EX_MemRead <= 0; ID_EX_MemWrite <= 0; ID_EX_Branch <= 0; ID_EX_Jump <= 0;
                 ID_EX_CSR_Write <= 0; ID_EX_CSR_Read <= 0; ID_EX_Ecall <= 0; ID_EX_Exret <= 0;
                 ID_EX_VectorOp <= 0; ID_EX_VectorRegWrite <= 0; ID_EX_VectorMemRead <= 0; ID_EX_VectorMemWrite <= 0;
@@ -496,8 +520,10 @@ module aurora_x_core #(
                 ID_EX_FpuOp <= 0; ID_EX_Fpu_ALU_Op <= 0;
                 ID_EX_predicted_taken <= 0;
                 ID_EX_predicted_target <= 0;
+                ID_EX_thread_id <= 1'b0;
             end else begin
                 ID_EX_pc <= IF_ID_pc;
+                ID_EX_thread_id <= IF_ID_thread_id;
                 ID_EX_read_data1 <= read_data1_D;
                 ID_EX_read_data2 <= read_data2_D;
                 ID_EX_vread_data1 <= vread_data1_D;
@@ -664,6 +690,7 @@ module aurora_x_core #(
             EX_MEM_CSR_Write <= 0; EX_MEM_CSR_Read <= 0;
             EX_MEM_VectorRegWrite <= 0; EX_MEM_VectorMemRead <= 0; EX_MEM_VectorMemWrite <= 0;
             EX_MEM_VectorMaskWe <= 0; EX_MEM_VectorUseMask <= 0;
+            EX_MEM_thread_id <= 1'b0;
         end else if (!Stall_Pipeline) begin
             EX_MEM_pc <= ID_EX_pc;
             EX_MEM_alu_result <= alu_result_E;
@@ -747,6 +774,7 @@ module aurora_x_core #(
             MEM_WB_VectorRegWrite <= 0;
             MEM_WB_VectorMemRead <= 0;
             MEM_WB_VectorMaskWe <= 0;
+            MEM_WB_thread_id <= 1'b0;
         end else if (!Stall_Pipeline) begin
             MEM_WB_pc <= EX_MEM_pc;
             MEM_WB_alu_result <= EX_MEM_alu_result;
@@ -786,7 +814,8 @@ module aurora_x_core #(
         end
     end
 
-    assign write_data_W = (MEM_WB_MemtoReg == 2'b01) ? MEM_WB_read_data : 
+    assign write_data_W = MEM_WB_VectorMaskWe ? MEM_WB_Mask_Result :
+                          (MEM_WB_MemtoReg == 2'b01) ? MEM_WB_read_data : 
                           (MEM_WB_MemtoReg == 2'b10) ? (MEM_WB_pc + 4) :
                           (MEM_WB_MemtoReg == 2'b11) ? csr_read_data_W :
                           MEM_WB_alu_result;

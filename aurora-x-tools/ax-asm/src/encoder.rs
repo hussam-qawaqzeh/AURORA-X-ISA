@@ -68,6 +68,10 @@ pub enum Instruction {
     VFma { vd: Reg, vs1: Reg, vs2: Reg },
     /// Vector: VPERM vd, vs1, vs2
     VPerm { vd: Reg, vs1: Reg, vs2: Reg },
+    /// Logic: SRA rd, rs1, rs2
+    Sra { rd: Reg, rs1: Reg, rs2: Reg },
+    /// Vector Compare: VCMP.GT vs1, vs2
+    VCmpGt { vs1: Reg, vs2: Reg },
 }
 
 impl Instruction {
@@ -92,8 +96,8 @@ impl Instruction {
             }
             Instruction::BranchX { rs1, rs2, imm, btype } => {
                 let opcode: u32 = match btype {
-                    0 => 0x40, // BNE
-                    1 => 0x46, // BEQ
+                    0 => 0x40, // BEQ / BRANCH.X
+                    1 => 0x46, // BNE
                     2 => 0x47, // BLT
                     3 => 0x48, // BGE
                     4 => 0x49, // BLTU
@@ -225,6 +229,11 @@ impl Instruction {
                 let rd_val = match rd { Reg::R(v) => *v as u32 }; let rs1_val = match rs1 { Reg::R(v) => *v as u32 }; let rs2_val = match rs2 { Reg::R(v) => *v as u32 };
                 (opcode << 24) | (rd_val << 19) | (rs1_val << 14) | (rs2_val << 9) | funct9
             }
+            Instruction::Sra { rd, rs1, rs2 } => {
+                let opcode: u32 = 0x06; let funct9: u32 = 0x01;
+                let rd_val = match rd { Reg::R(v) => *v as u32 }; let rs1_val = match rs1 { Reg::R(v) => *v as u32 }; let rs2_val = match rs2 { Reg::R(v) => *v as u32 };
+                (opcode << 24) | (rd_val << 19) | (rs1_val << 14) | (rs2_val << 9) | funct9
+            }
             Instruction::VAdd { vd, vs1, vs2 } => {
                 let opcode: u32 = 0x62; // VADD
                 let funct9: u32 = 0x00; // 32-bit element
@@ -253,6 +262,14 @@ impl Instruction {
                 let opcode: u32 = 0x65; // VPERM
                 let funct9: u32 = 0x00;
                 let rd_val = match vd { Reg::R(v) => *v as u32 };
+                let rs1_val = match vs1 { Reg::R(v) => *v as u32 };
+                let rs2_val = match vs2 { Reg::R(v) => *v as u32 };
+                (opcode << 24) | (rd_val << 19) | (rs1_val << 14) | (rs2_val << 9) | funct9
+            }
+            Instruction::VCmpGt { vs1, vs2 } => {
+                let opcode: u32 = 0x54; // VCMP.GT
+                let funct9: u32 = 0x00;
+                let rd_val = 0; // dummy
                 let rs1_val = match vs1 { Reg::R(v) => *v as u32 };
                 let rs2_val = match vs2 { Reg::R(v) => *v as u32 };
                 (opcode << 24) | (rd_val << 19) | (rs1_val << 14) | (rs2_val << 9) | funct9

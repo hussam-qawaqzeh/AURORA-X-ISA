@@ -44,15 +44,10 @@
 // ----------------------------------------------------------------------------
 // Memory Subsystem
 // ----------------------------------------------------------------------------
-`define ENABLE_L3_CACHE 0         // 1 to enable L3 cache, 0 to disable
+`define ENABLE_L3_CACHE 1         // 1 to enable L3 cache, 0 to disable
 `define ENABLE_3D_VCACHE 0        // 1 to use 3D V-Cache sizes (requires L3 enabled)
 `define ENABLE_MMU 1              // 1 to enable Memory Management Unit (Virtual Memory)
 
-// L3 Cache Size calculation based on 3D V-Cache flag
-`ifdef ENABLE_3D_VCACHE
-    `define L3_CACHE_SIZE_BYTES 104857600 // 100 MB (Note: Reduce for faster iverilog compilation)
-`else
-    `define L3_CACHE_SIZE_BYTES 20971520  // 20 MB
-`endif
+`define L3_CACHE_SIZE_BYTES (`ENABLE_3D_VCACHE ? 65536 : 512)
 
 `endif // AURORA_CONFIG_VH

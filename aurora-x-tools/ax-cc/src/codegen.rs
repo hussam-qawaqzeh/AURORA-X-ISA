@@ -6,6 +6,8 @@ enum Inst {
     Addi(u8, u8, i32),
     Add(u8, u8, u8),
     Sub(u8, u8, u8),
+    Mul(u8, u8, u8),
+    Div(u8, u8, u8),
     Shr(u8, u8, u8),
     Branch(u8, u8, String), // BEQ
     Jump(String),
@@ -23,7 +25,7 @@ impl CodeGen {
     pub fn new() -> Self {
         Self {
             var_to_reg: HashMap::new(),
-            next_reg: 1, // R1 to R28 for locals
+            next_reg: 1, // R1 to R24 for locals
             label_count: 0,
         }
     }
@@ -39,7 +41,7 @@ impl CodeGen {
         } else {
             let r = self.next_reg;
             self.next_reg += 1;
-            if self.next_reg > 28 { panic!("Out of registers!"); }
+            if self.next_reg > 24 { panic!("Out of registers!"); }
             self.var_to_reg.insert(name.to_string(), r);
             r
         }
@@ -68,36 +70,32 @@ impl CodeGen {
             self.gen_stmt(stmt, asm);
         }
         
-        let end_label = self.new_label("end_func");
-        asm.push(Inst::Label(end_label.clone()));
-        asm.push(Inst::Jump(end_label)); // infinite loop at end
+        if func.name == "main" {
+            let end_label = self.new_label("end_func");
+            asm.push(Inst::Label(end_label.clone()));
+            asm.push(Inst::Jump(end_label)); // infinite loop at end of main
+        }
     }
 
     fn gen_stmt(&mut self, stmt: &Statement, asm: &mut Vec<Inst>) {
         match stmt {
             Statement::Declare(name, expr) => {
                 let r = self.get_reg(name);
-                let res_r = self.gen_expr(expr, asm);
+                let res_r = self.gen_expr(expr, asm, 0);
                 if r != res_r {
                     asm.push(Inst::Addi(r, res_r, 0)); // Move
                 }
             }
             Statement::Assign(name, expr) => {
                 let r = self.get_reg(name);
-                let res_r = self.gen_expr(expr, asm);
+                let res_r = self.gen_expr(expr, asm, 0);
                 if r != res_r {
                     asm.push(Inst::Addi(r, res_r, 0));
                 }
             }
             Statement::If(cond, body) => {
                 let end_label = self.new_label("if_end");
-                // Evaluate condition. We want to skip body if condition is false.
-                // Condition returns a register that is 1 if true, 0 if false.
-                let cond_reg = self.gen_expr(cond, asm);
-                
-                // Compare with 0. If equal to 0, it's false, so JUMP to end_label.
-                // BRANCH.X jumps if EQUAL.
-                // So: BRANCH.X cond_reg, R0, end_label
+                let cond_reg = self.gen_expr(cond, asm, 0);
                 asm.push(Inst::Branch(cond_reg, 0, end_label.clone()));
                 
                 for s in body {
@@ -112,8 +110,7 @@ impl CodeGen {
                 
                 asm.push(Inst::Label(start_label.clone()));
                 
-                let cond_reg = self.gen_expr(cond, asm);
-                // If cond == 0, break loop
+                let cond_reg = self.gen_expr(cond, asm, 0);
                 asm.push(Inst::Branch(cond_reg, 0, end_label.clone()));
                 
                 for s in body {
@@ -124,14 +121,12 @@ impl CodeGen {
                 asm.push(Inst::Label(end_label));
             }
             Statement::Return(expr) => {
-                let res_r = self.gen_expr(expr, asm);
-                // Return puts value in R1 usually, but here we'll just write it to CSR 0x700 for testing
+                let res_r = self.gen_expr(expr, asm, 0);
                 asm.push(Inst::CsrWrite(res_r, 0x700));
             }
             Statement::CallStmt(name, args) => {
-                // Simplified: if name == "print", write arg0 to CSR 0x701
                 if name == "print" && args.len() == 1 {
-                    let r = self.gen_expr(&args[0], asm);
+                    let r = self.gen_expr(&args[0], asm, 0);
                     asm.push(Inst::CsrWrite(r, 0x701));
                 } else {
                     panic!("Unsupported function call: {}", name);
@@ -140,10 +135,11 @@ impl CodeGen {
         }
     }
 
-    fn gen_expr(&mut self, expr: &Expression, asm: &mut Vec<Inst>) -> u8 {
+    fn gen_expr(&mut self, expr: &Expression, asm: &mut Vec<Inst>, temp_idx: u8) -> u8 {
         match expr {
             Expression::Number(n) => {
-                let r = 21; // Temp register
+                let r = 25 + temp_idx; // Temp register starts at 25
+                if r > 31 { panic!("Out of temp registers!"); }
                 asm.push(Inst::Addi(r, 0, *n));
                 r
             }
@@ -151,23 +147,21 @@ impl CodeGen {
                 self.get_reg(name)
             }
             Expression::BinaryOp(op, left, right) => {
-                let l_reg = self.gen_expr(left, asm);
-                // Need to save l_reg because gen_expr might use temp R21
-                let safe_l = 22;
-                asm.push(Inst::Addi(safe_l, l_reg, 0));
+                let res_reg = 25 + temp_idx;
+                if res_reg > 31 { panic!("Out of temp registers!"); }
                 
-                let r_reg = self.gen_expr(right, asm);
+                let l_reg = self.gen_expr(left, asm, temp_idx);
+                let r_reg = self.gen_expr(right, asm, temp_idx + 1);
                 
-                let res_reg = 21; // Result in temp
                 match op {
-                    Op::Add => asm.push(Inst::Add(res_reg, safe_l, r_reg)),
-                    Op::Sub => asm.push(Inst::Sub(res_reg, safe_l, r_reg)),
+                    Op::Add => asm.push(Inst::Add(res_reg, l_reg, r_reg)),
+                    Op::Sub => asm.push(Inst::Sub(res_reg, l_reg, r_reg)),
+                    Op::Mul => asm.push(Inst::Mul(res_reg, l_reg, r_reg)),
+                    Op::Div => asm.push(Inst::Div(res_reg, l_reg, r_reg)),
                     Op::Eq => {
-                        // safe_l == r_reg
-                        // If equal, branch to true. Else, go to false.
                         let true_label = self.new_label("eq_true");
                         let end_label = self.new_label("eq_end");
-                        asm.push(Inst::Branch(safe_l, r_reg, true_label.clone()));
+                        asm.push(Inst::Branch(l_reg, r_reg, true_label.clone()));
                         asm.push(Inst::Addi(res_reg, 0, 0)); // false
                         asm.push(Inst::Jump(end_label.clone()));
                         asm.push(Inst::Label(true_label));
@@ -177,30 +171,27 @@ impl CodeGen {
                     Op::Neq => {
                         let true_label = self.new_label("neq_true");
                         let end_label = self.new_label("neq_end");
-                        asm.push(Inst::Branch(safe_l, r_reg, true_label.clone()));
-                        asm.push(Inst::Addi(res_reg, 0, 1)); // Neq -> true if didn't branch
+                        asm.push(Inst::Branch(l_reg, r_reg, true_label.clone()));
+                        asm.push(Inst::Addi(res_reg, 0, 1)); // true
                         asm.push(Inst::Jump(end_label.clone()));
                         asm.push(Inst::Label(true_label));
                         asm.push(Inst::Addi(res_reg, 0, 0)); // false
                         asm.push(Inst::Label(end_label));
                     }
                     Op::Lt => {
-                        // left < right  =>  left - right < 0
-                        // res_reg = (left - right) >> 63
-                        asm.push(Inst::Sub(res_reg, safe_l, r_reg));
-                        let shift_amt_reg = 29; // temp reg for shift amount
+                        asm.push(Inst::Sub(res_reg, l_reg, r_reg));
+                        let shift_amt_reg = 25 + temp_idx + 1;
+                        if shift_amt_reg > 31 { panic!("Out of temp registers!"); }
                         asm.push(Inst::Addi(shift_amt_reg, 0, 63));
                         asm.push(Inst::Shr(res_reg, res_reg, shift_amt_reg));
                     }
                     Op::Gt => {
-                        // left > right  =>  right - left < 0
-                        // res_reg = (right - left) >> 63
-                        asm.push(Inst::Sub(res_reg, r_reg, safe_l));
-                        let shift_amt_reg = 29; // temp reg for shift amount
+                        asm.push(Inst::Sub(res_reg, r_reg, l_reg));
+                        let shift_amt_reg = 25 + temp_idx + 1;
+                        if shift_amt_reg > 31 { panic!("Out of temp registers!"); }
                         asm.push(Inst::Addi(shift_amt_reg, 0, 63));
                         asm.push(Inst::Shr(res_reg, res_reg, shift_amt_reg));
                     }
-                    _ => panic!("Unsupported operator {:?}", op),
                 }
                 res_reg
             }
@@ -240,6 +231,14 @@ impl CodeGen {
                 }
                 Inst::Sub(rd, rs1, rs2) => {
                     resolved.push_str(&format!("    SUB.X R{}, R{}, R{}\n", rd, rs1, rs2));
+                    pc += 1;
+                }
+                Inst::Mul(rd, rs1, rs2) => {
+                    resolved.push_str(&format!("    MUL.X R{}, R{}, R{}\n", rd, rs1, rs2));
+                    pc += 1;
+                }
+                Inst::Div(rd, rs1, rs2) => {
+                    resolved.push_str(&format!("    DIV.X R{}, R{}, R{}\n", rd, rs1, rs2));
                     pc += 1;
                 }
                 Inst::Shr(rd, rs1, rs2) => {

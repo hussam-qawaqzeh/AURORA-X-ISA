@@ -31,7 +31,7 @@ module l2_cache (
     localparam IDLE = 2'b00, FETCH = 2'b01, WRITE = 2'b10;
     
     integer i;
-    always @(posedge clk or negedge rst_n) begin
+    always @(posedge clk) begin
         if (!rst_n) begin
             state <= IDLE;
             for (i=0; i<CACHE_LINES; i=i+1) cache_valid[i] <= 0;
@@ -47,51 +47,70 @@ module l2_cache (
         end
     end
     
+    reg bus_ready_v;
+    reg [1:0] next_state_v;
+    reg mem_we_v;
+    reg mem_re_v;
+    reg [63:0] mem_addr_v;
+    reg [63:0] mem_write_data_v;
+    reg [63:0] bus_read_data_v;
+
     always @(*) begin
-        bus_ready = 1;
-        next_state = state;
-        mem_we = 0;
-        mem_re = 0;
-        mem_addr = bus_addr;
-        mem_write_data = bus_write_data;
-        bus_read_data = 64'd0;
+        bus_ready_v = 1;
+        next_state_v = state;
+        mem_we_v = 0;
+        mem_re_v = 0;
+        mem_addr_v = bus_addr;
+        mem_write_data_v = bus_write_data;
+        bus_read_data_v = 64'd0;
         
         case (state)
             IDLE: begin
                 if (bus_re) begin
                     if (cache_valid[index] && cache_tag[index] == tag) begin
-                        bus_read_data = cache_data[index];
+                        // Cache Hit
+                        bus_read_data_v = cache_data[index];
                     end else begin
-                        bus_ready = 0;
-                        mem_re = 1;
-                        next_state = FETCH;
+                        // Cache Miss
+                        bus_ready_v = 0;
+                        mem_re_v = 1;
+                        next_state_v = FETCH;
                     end
                 end else if (bus_we) begin
-                    mem_we = 1;
+                    // Write-Through policy
+                    mem_we_v = 1;
                     if (!mem_ready) begin
-                        bus_ready = 0;
-                        next_state = WRITE;
+                        bus_ready_v = 0;
+                        next_state_v = WRITE;
                     end
                 end
             end
             FETCH: begin
-                bus_ready = 0;
-                mem_re = 1;
+                bus_ready_v = 0;
+                mem_re_v = 1;
                 if (mem_ready) begin
-                    bus_ready = 1; 
-                    bus_read_data = mem_read_data; 
-                    next_state = IDLE;
+                    bus_ready_v = 1; 
+                    bus_read_data_v = mem_read_data; 
+                    next_state_v = IDLE;
                 end
             end
             WRITE: begin
-                bus_ready = 0;
-                mem_we = 1;
+                bus_ready_v = 0;
+                mem_we_v = 1;
                 if (mem_ready) begin
-                    bus_ready = 1;
-                    next_state = IDLE;
+                    bus_ready_v = 1;
+                    next_state_v = IDLE;
                 end
             end
-            default: next_state = IDLE;
+            default: next_state_v = IDLE;
         endcase
+
+        bus_ready = bus_ready_v;
+        next_state = next_state_v;
+        mem_we = mem_we_v;
+        mem_re = mem_re_v;
+        mem_addr = mem_addr_v;
+        mem_write_data = mem_write_data_v;
+        bus_read_data = bus_read_data_v;
     end
 endmodule

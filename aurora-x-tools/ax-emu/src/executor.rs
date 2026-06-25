@@ -73,13 +73,39 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
         0x06 => {
             let val1 = cpu.read_reg(dec.rs1);
             let val2 = cpu.read_reg(dec.rs2);
-            // shift right by lower 6 bits of val2
-            cpu.write_reg(dec.rd, val1 >> (val2 & 0x3F));
+            if dec.funct9 == 1 {
+                // SRA (Arithmetic shift right)
+                cpu.write_reg(dec.rd, ((val1 as i64) >> (val2 & 0x3F)) as u64);
+            } else {
+                // SHR (Logical shift right)
+                cpu.write_reg(dec.rd, val1 >> (val2 & 0x3F));
+            }
+        }
+        0x07 => {
+            let val1 = cpu.read_reg(dec.rs1);
+            let val2 = cpu.read_reg(dec.rs2);
+            cpu.write_reg(dec.rd, val1.wrapping_mul(val2));
+        }
+        0x08 => {
+            let val1 = cpu.read_reg(dec.rs1);
+            let val2 = cpu.read_reg(dec.rs2);
+            let res = if val2 != 0 { val1 / val2 } else { 0 };
+            cpu.write_reg(dec.rd, res);
         }
         0x09 => {
             let val1 = cpu.read_reg(dec.rs1);
-            let imm = dec.imm14 as u64;
+            let imm = dec.imm14 as i64 as u64;
             cpu.write_reg(dec.rd, val1.wrapping_add(imm));
+        }
+        0x0A => {
+            let val1 = cpu.read_reg(dec.rs1) as i64;
+            let val2 = cpu.read_reg(dec.rs2) as i64;
+            cpu.write_reg(dec.rd, if val1 < val2 { 1 } else { 0 });
+        }
+        0x0B => {
+            let val1 = cpu.read_reg(dec.rs1);
+            let val2 = cpu.read_reg(dec.rs2);
+            cpu.write_reg(dec.rd, if val1 < val2 { 1 } else { 0 });
         }
         0x21 => {
             // LOAD.X
@@ -138,10 +164,55 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
             }
         }
         0x40 => {
-            // BRANCH.X
+            // BRANCH.X / BEQ
             let val1 = cpu.read_reg(dec.rd);
             let val2 = cpu.read_reg(dec.rs1);
             if val1 == val2 {
+                let offset = (dec.imm14 << 2) as i16 as i64;
+                cpu.pc = cpu.pc.wrapping_add(offset as u64).wrapping_sub(4);
+            }
+        }
+        0x46 => {
+            // BNE
+            let val1 = cpu.read_reg(dec.rd);
+            let val2 = cpu.read_reg(dec.rs1);
+            if val1 != val2 {
+                let offset = (dec.imm14 << 2) as i16 as i64;
+                cpu.pc = cpu.pc.wrapping_add(offset as u64).wrapping_sub(4);
+            }
+        }
+        0x47 => {
+            // BLT
+            let val1 = cpu.read_reg(dec.rd) as i64;
+            let val2 = cpu.read_reg(dec.rs1) as i64;
+            if val1 < val2 {
+                let offset = (dec.imm14 << 2) as i16 as i64;
+                cpu.pc = cpu.pc.wrapping_add(offset as u64).wrapping_sub(4);
+            }
+        }
+        0x48 => {
+            // BGE
+            let val1 = cpu.read_reg(dec.rd) as i64;
+            let val2 = cpu.read_reg(dec.rs1) as i64;
+            if val1 >= val2 {
+                let offset = (dec.imm14 << 2) as i16 as i64;
+                cpu.pc = cpu.pc.wrapping_add(offset as u64).wrapping_sub(4);
+            }
+        }
+        0x49 => {
+            // BLTU
+            let val1 = cpu.read_reg(dec.rd);
+            let val2 = cpu.read_reg(dec.rs1);
+            if val1 < val2 {
+                let offset = (dec.imm14 << 2) as i16 as i64;
+                cpu.pc = cpu.pc.wrapping_add(offset as u64).wrapping_sub(4);
+            }
+        }
+        0x4A => {
+            // BGEU
+            let val1 = cpu.read_reg(dec.rd);
+            let val2 = cpu.read_reg(dec.rs1);
+            if val1 >= val2 {
                 let offset = (dec.imm14 << 2) as i16 as i64;
                 cpu.pc = cpu.pc.wrapping_add(offset as u64).wrapping_sub(4);
             }
@@ -210,6 +281,21 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
                 cpu.pc = epc.wrapping_sub(4);
             }
         }
+        0x54 => {
+            // VCMP.GT (Vector Compare Greater Than)
+            let vl = cpu.read_csr(0x508);
+            let elements = (vl / 4) as usize;
+            let mut mask = 0u64;
+            for i in 0..elements {
+                let offset = i * 4;
+                let v1 = i32::from_le_bytes(cpu.vr[dec.rs1][offset..offset+4].try_into().unwrap());
+                let v2 = i32::from_le_bytes(cpu.vr[dec.rs2][offset..offset+4].try_into().unwrap());
+                if v1 > v2 {
+                    mask |= 1 << i;
+                }
+            }
+            cpu.vmask = mask;
+        }
         0x60 => {
             // VLOAD
             let vl = cpu.read_csr(0x508); // AX_VEC_CONTROL
@@ -260,8 +346,13 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
                 match translate(cpu, mem, vaddr, true) {
                     Ok(paddr) => {
                         let vs2_idx = dec.rs1;
-                        for i in 0..(vl as usize) {
-                            mem.ram[paddr as usize + i] = cpu.vr[vs2_idx][i];
+                        let p = paddr as usize;
+                        if p + (vl as usize) <= mem.ram.len() {
+                            for i in 0..(vl as usize) {
+                                mem.ram[p + i] = cpu.vr[vs2_idx][i];
+                            }
+                        } else {
+                            panic!("VSTORE out of bounds: paddr {} + vl {} > mem size {}", p, vl, mem.ram.len());
                         }
                     }
                     Err(cause) => {
@@ -279,56 +370,65 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
             // VADD (32-bit elements)
             let vl = cpu.read_csr(0x508);
             let elements = (vl / 4) as usize; // 32-bit = 4 bytes
+            let use_mask = (dec.funct9 & 0x100) != 0;
             for i in 0..elements {
-                let offset = i * 4;
-                let v1 = u32::from_le_bytes(cpu.vr[dec.rs1][offset..offset+4].try_into().unwrap());
-                let v2 = u32::from_le_bytes(cpu.vr[dec.rs2][offset..offset+4].try_into().unwrap());
-                let res = v1.wrapping_add(v2);
-                cpu.vr[dec.rd][offset..offset+4].copy_from_slice(&res.to_le_bytes());
+                if !use_mask || (cpu.vmask & (1 << i)) != 0 {
+                    let offset = i * 4;
+                    let v1 = u32::from_le_bytes(cpu.vr[dec.rs1][offset..offset+4].try_into().unwrap());
+                    let v2 = u32::from_le_bytes(cpu.vr[dec.rs2][offset..offset+4].try_into().unwrap());
+                    let res = v1.wrapping_add(v2);
+                    cpu.vr[dec.rd][offset..offset+4].copy_from_slice(&res.to_le_bytes());
+                }
             }
         }
         0x63 => {
             // VMUL (32-bit elements)
             let vl = cpu.read_csr(0x508);
             let elements = (vl / 4) as usize;
+            let use_mask = (dec.funct9 & 0x100) != 0;
             for i in 0..elements {
-                let offset = i * 4;
-                let v1 = u32::from_le_bytes(cpu.vr[dec.rs1][offset..offset+4].try_into().unwrap());
-                let v2 = u32::from_le_bytes(cpu.vr[dec.rs2][offset..offset+4].try_into().unwrap());
-                let res = v1.wrapping_mul(v2);
-                cpu.vr[dec.rd][offset..offset+4].copy_from_slice(&res.to_le_bytes());
+                if !use_mask || (cpu.vmask & (1 << i)) != 0 {
+                    let offset = i * 4;
+                    let v1 = u32::from_le_bytes(cpu.vr[dec.rs1][offset..offset+4].try_into().unwrap());
+                    let v2 = u32::from_le_bytes(cpu.vr[dec.rs2][offset..offset+4].try_into().unwrap());
+                    let res = v1.wrapping_mul(v2);
+                    cpu.vr[dec.rd][offset..offset+4].copy_from_slice(&res.to_le_bytes());
+                }
             }
         }
         0x64 => {
             // VFMA (32-bit elements: vd = vd + (vs1 * vs2))
             let vl = cpu.read_csr(0x508);
             let elements = (vl / 4) as usize;
+            let use_mask = (dec.funct9 & 0x100) != 0;
             for i in 0..elements {
-                let offset = i * 4;
-                let vd_val = u32::from_le_bytes(cpu.vr[dec.rd][offset..offset+4].try_into().unwrap());
-                let v1 = u32::from_le_bytes(cpu.vr[dec.rs1][offset..offset+4].try_into().unwrap());
-                let v2 = u32::from_le_bytes(cpu.vr[dec.rs2][offset..offset+4].try_into().unwrap());
-                let res = vd_val.wrapping_add(v1.wrapping_mul(v2));
-                cpu.vr[dec.rd][offset..offset+4].copy_from_slice(&res.to_le_bytes());
+                if !use_mask || (cpu.vmask & (1 << i)) != 0 {
+                    let offset = i * 4;
+                    let vd_val = u32::from_le_bytes(cpu.vr[dec.rd][offset..offset+4].try_into().unwrap());
+                    let v1 = u32::from_le_bytes(cpu.vr[dec.rs1][offset..offset+4].try_into().unwrap());
+                    let v2 = u32::from_le_bytes(cpu.vr[dec.rs2][offset..offset+4].try_into().unwrap());
+                    let res = vd_val.wrapping_add(v1.wrapping_mul(v2));
+                    cpu.vr[dec.rd][offset..offset+4].copy_from_slice(&res.to_le_bytes());
+                }
             }
         }
         0x65 => {
             // VPERM (32-bit elements: vd[i] = vs1[vs2[i]])
-            // vs2 contains indices
             let vl = cpu.read_csr(0x508);
             let elements = (vl / 4) as usize;
+            let use_mask = (dec.funct9 & 0x100) != 0;
             let mut temp_out = vec![0u8; vl as usize];
+            temp_out[0..vl as usize].copy_from_slice(&cpu.vr[dec.rd][0..vl as usize]);
             for i in 0..elements {
-                let offset = i * 4;
-                let idx = u32::from_le_bytes(cpu.vr[dec.rs2][offset..offset+4].try_into().unwrap()) as usize;
-                
-                // Safe bounds checking
-                if idx < elements {
-                    let src_offset = idx * 4;
-                    temp_out[offset..offset+4].copy_from_slice(&cpu.vr[dec.rs1][src_offset..src_offset+4]);
-                } else {
-                    // Out of bounds permute -> 0
-                    temp_out[offset..offset+4].copy_from_slice(&[0, 0, 0, 0]);
+                if !use_mask || (cpu.vmask & (1 << i)) != 0 {
+                    let offset = i * 4;
+                    let idx = u32::from_le_bytes(cpu.vr[dec.rs2][offset..offset+4].try_into().unwrap()) as usize;
+                    if idx < elements {
+                        let src_offset = idx * 4;
+                        temp_out[offset..offset+4].copy_from_slice(&cpu.vr[dec.rs1][src_offset..src_offset+4]);
+                    } else {
+                        temp_out[offset..offset+4].copy_from_slice(&[0, 0, 0, 0]);
+                    }
                 }
             }
             cpu.vr[dec.rd][0..vl as usize].copy_from_slice(&temp_out);

@@ -7,7 +7,7 @@ pub mod codegen;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 3 {
+    if args.len() < 4 || args[2] != "-o" {
         eprintln!("Usage: ax-cc <input.c> -o <output.s>");
         return;
     }

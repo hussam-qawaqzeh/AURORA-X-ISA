@@ -10,28 +10,31 @@ set FAIL_COUNT=0
 set PASS_COUNT=0
 
 for %%f in (*.s) do (
-    echo [RUNNING] %%f...
-    
-    rem 1. Assemble
-    ..\aurora-x-tools\target\debug\ax-asm.exe "%%f" -o "%%~nf.bin" >nul 2>&1
-    if !errorlevel! neq 0 (
-        echo   [ERROR] Assembly failed for %%f
-        set /a FAIL_COUNT+=1
-        continue
-    )
-    
-    rem 2. Run Emulator in Test Mode
-    ..\aurora-x-tools\target\debug\ax-emu.exe --test "%%~nf.bin" >nul 2>&1
-    if !errorlevel! equ 0 (
-        echo   [PASS]  %%f
-        set /a PASS_COUNT+=1
+    if "%%f"=="test_mesi.s" (
+        echo [SKIPPED] %%f [Multicore Snoop Test - requires Hardware simulation]
     ) else (
-        echo   [FAIL]  %%f
-        set /a FAIL_COUNT+=1
+        echo [RUNNING] %%f...
+        
+        rem 1. Assemble
+        ..\aurora-x-tools\target\debug\ax-asm.exe "%%f" -o "%%~nf.bin" >nul 2>&1
+        if !errorlevel! neq 0 (
+            echo   [ERROR] Assembly failed for %%f
+            set /a FAIL_COUNT+=1
+        ) else (
+            rem 2. Run Emulator in Test Mode
+            ..\aurora-x-tools\target\debug\ax-emu.exe --test "%%~nf.bin" >nul 2>&1
+            if !errorlevel! equ 0 (
+                echo   [PASS]  %%f
+                set /a PASS_COUNT+=1
+            ) else (
+                echo   [FAIL]  %%f
+                set /a FAIL_COUNT+=1
+            )
+            
+            rem Cleanup
+            del "%%~nf.bin" >nul 2>&1
+        )
     )
-    
-    rem Cleanup
-    del "%%~nf.bin" >nul 2>&1
 )
 
 echo.

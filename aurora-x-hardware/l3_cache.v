@@ -30,7 +30,7 @@ module l3_cache (
     reg        cache_valid[0:CACHE_LINES-1];
     
     // Use modulo for index to avoid hardcoded bit-widths, allows arbitrary size
-    wire [31:0] index = (bus_addr >> 3) % CACHE_LINES;
+    wire [31:0] index = (bus_addr >> 3) & (CACHE_LINES - 1);
     wire [60:0] tag   = bus_addr[63:3];
     
     reg [1:0] state, next_state;
@@ -43,9 +43,12 @@ module l3_cache (
         end
     end
     
-    always @(posedge clk or negedge rst_n) begin
+    always @(posedge clk) begin
         if (!rst_n) begin
             state <= IDLE;
+            for (i = 0; i < CACHE_LINES; i = i + 1) begin
+                cache_valid[i] <= 0;
+            end
         end else begin
             state <= next_state;
             if (state == FETCH && mem_ready) begin
@@ -59,54 +62,68 @@ module l3_cache (
         end
     end
     
+    reg bus_ready_v;
+    reg [1:0] next_state_v;
+    reg mem_we_v;
+    reg mem_re_v;
+    reg [63:0] mem_addr_v;
+    reg [63:0] mem_write_data_v;
+    reg [63:0] bus_read_data_v;
+
     always @(*) begin
-        bus_ready = 1;
-        next_state = state;
-        mem_we = 0;
-        mem_re = 0;
-        mem_addr = bus_addr;
-        mem_write_data = bus_write_data;
-        bus_read_data = 64'd0;
+        bus_ready_v = 1;
+        next_state_v = state;
+        mem_we_v = 0;
+        mem_re_v = 0;
+        mem_addr_v = bus_addr;
+        mem_write_data_v = bus_write_data;
+        bus_read_data_v = 64'd0;
         
         case (state)
             IDLE: begin
                 if (bus_re) begin
                     if (cache_valid[index] && cache_tag[index] == tag) begin
-                        // L3 Hit
-                        bus_read_data = cache_data[index];
+                        bus_read_data_v = cache_data[index];
                     end else begin
-                        // L3 Miss
-                        bus_ready = 0;
-                        mem_re = 1;
-                        next_state = FETCH;
+                        bus_ready_v = 0;
+                        mem_re_v = 1;
+                        next_state_v = FETCH;
                     end
                 end else if (bus_we) begin
                     // Write-Through policy for L3 to Main Memory
-                    mem_we = 1;
+                    mem_we_v = 1;
                     if (!mem_ready) begin
-                        bus_ready = 0;
-                        next_state = WRITE;
+                        bus_ready_v = 0;
+                        next_state_v = WRITE;
                     end
                 end
             end
             FETCH: begin
-                bus_ready = 0;
-                mem_re = 1;
+                bus_ready_v = 0;
+                mem_re_v = 1;
                 if (mem_ready) begin
-                    bus_ready = 1; 
-                    bus_read_data = mem_read_data; 
-                    next_state = IDLE;
+                    bus_ready_v = 1; 
+                    bus_read_data_v = mem_read_data; 
+                    next_state_v = IDLE;
                 end
             end
             WRITE: begin
-                bus_ready = 0;
-                mem_we = 1;
+                bus_ready_v = 0;
+                mem_we_v = 1;
                 if (mem_ready) begin
-                    bus_ready = 1;
-                    next_state = IDLE;
+                    bus_ready_v = 1;
+                    next_state_v = IDLE;
                 end
             end
-            default: next_state = IDLE;
+            default: next_state_v = IDLE;
         endcase
+
+        bus_ready = bus_ready_v;
+        next_state = next_state_v;
+        mem_we = mem_we_v;
+        mem_re = mem_re_v;
+        mem_addr = mem_addr_v;
+        mem_write_data = mem_write_data_v;
+        bus_read_data = bus_read_data_v;
     end
 endmodule

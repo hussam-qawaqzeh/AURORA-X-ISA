@@ -64,19 +64,26 @@ module ax_pmu (
             // Use 2 bits per core for divider, starting from bit 32
             wire [1:0] core_div = pmu_ctrl[32 + (g*2) +: 2];
 
-            reg clk_mux;
-            always @(*) begin
-                if (!core_en) clk_mux = 1'b0; // Core Gated
-                else begin
-                    case (core_div)
-                        2'b00: clk_mux = clk;
-                        2'b01: clk_mux = div_counter[g][0]; // /2
-                        2'b10: clk_mux = div_counter[g][1]; // /4
-                        2'b11: clk_mux = div_counter[g][2]; // /8
-                    endcase
+            // Glitch-free clock gating and division select
+            reg [1:0] div_sel_sync;
+            reg       core_en_sync;
+            
+            always @(negedge clk or negedge rst_n) begin
+                if (!rst_n) begin
+                    div_sel_sync <= 2'b00;
+                    core_en_sync <= 1'b0;
+                end else begin
+                    div_sel_sync <= core_div;
+                    core_en_sync <= core_en;
                 end
             end
-            assign clk_cores[g] = clk_mux;
+            
+            wire clk_div = (div_sel_sync == 2'b00) ? clk :
+                           (div_sel_sync == 2'b01) ? div_counter[g][0] :
+                           (div_sel_sync == 2'b10) ? div_counter[g][1] :
+                                                     div_counter[g][2];
+                                                     
+            assign clk_cores[g] = clk_div & core_en_sync;
         end
     endgenerate
 

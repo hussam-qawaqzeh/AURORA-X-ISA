@@ -180,7 +180,11 @@ module ax_uart #(
         end else begin
             ready <= 1'b0;
             if (we || re) begin
-                ready <= 1'b1; // Respond in 1 cycle
+                if (we && addr == TX_DATA) begin
+                    ready <= tx_ready;
+                end else begin
+                    ready <= 1'b1;
+                end
             end
             
             if (re) begin

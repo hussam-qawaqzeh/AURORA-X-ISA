@@ -123,16 +123,16 @@ module decoder (
                 MemWrite = 1; ALUSrc_B = 1; ALU_Op = 4'b0000;
             end
             8'h0A: begin // SLT
-                RegWrite = 1; ALUSrc_B = 0; ALU_Op = 4'b1011;
+                RegWrite = 1; ALUSrc_B = 0; ALU_Op = 4'b1010;
             end
             8'h0B: begin // SLTU
-                RegWrite = 1; ALUSrc_B = 0; ALU_Op = 4'b1100;
+                RegWrite = 1; ALUSrc_B = 0; ALU_Op = 4'b1011;
             end
-            8'h40: begin // BNE (Legacy BRANCH.X)
-                Branch = 1; Branch_Type = 3'b001; // BNE is type 1
-            end
-            8'h46: begin // BEQ
+            8'h40: begin // BEQ (Legacy BRANCH.X)
                 Branch = 1; Branch_Type = 3'b000; // BEQ is type 0
+            end
+            8'h46: begin // BNE
+                Branch = 1; Branch_Type = 3'b001; // BNE is type 1
             end
             8'h47: begin // BLT
                 Branch = 1; Branch_Type = 3'b010;
@@ -181,7 +181,7 @@ module decoder (
                 VectorOp = 1; VALU_Op = 3'b010; VectorRegWrite = 1;
                 VectorUseMask = funct9[8];
             end
-            8'h53: begin // VPERM (Vector Permute)
+            8'h65: begin // VPERM (Vector Permute)
                 VectorOp = 1;
                 VectorRegWrite = 1;
                 VALU_Op = 3'b011;

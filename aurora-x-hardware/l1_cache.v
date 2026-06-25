@@ -37,7 +37,7 @@ module l1_cache (
     localparam IDLE = 2'b00, FETCH = 2'b01, WRITE = 2'b10;
     
     integer i;
-    always @(posedge clk or negedge rst_n) begin
+    always @(posedge clk) begin
         if (!rst_n) begin
             state <= IDLE;
             for (i=0; i<CACHE_LINES; i=i+1) cache_valid[i] <= 0;
@@ -67,51 +67,70 @@ module l1_cache (
         end
     end
     
+    reg stall_v;
+    reg [1:0] next_state_v;
+    reg mem_we_v;
+    reg mem_re_v;
+    reg [63:0] mem_addr_v;
+    reg [63:0] mem_write_data_v;
+    reg [63:0] cpu_read_data_v;
+
     always @(*) begin
-        stall = 0;
-        next_state = state;
-        mem_we = 0;
-        mem_re = 0;
-        mem_addr = cpu_addr;
-        mem_write_data = cpu_write_data;
-        cpu_read_data = 64'd0;
+        stall_v = 0;
+        next_state_v = state;
+        mem_we_v = 0;
+        mem_re_v = 0;
+        mem_addr_v = cpu_addr;
+        mem_write_data_v = cpu_write_data;
+        cpu_read_data_v = 64'd0;
         
         case (state)
             IDLE: begin
                 if (cpu_re) begin
                     if (cache_valid[index] && cache_tag[index] == tag) begin
-                        cpu_read_data = cache_data[index];
+                        // Hit
+                        cpu_read_data_v = cache_data[index];
                     end else begin
-                        stall = 1;
-                        mem_re = 1;
-                        next_state = FETCH;
+                        // Miss
+                        stall_v = 1;
+                        mem_re_v = 1;
+                        next_state_v = FETCH;
                     end
                 end else if (cpu_we) begin
-                    mem_we = 1;
+                    // Write-Through
+                    mem_we_v = 1;
                     if (!mem_ready) begin
-                        stall = 1;
-                        next_state = WRITE;
+                        stall_v = 1;
+                        next_state_v = WRITE;
                     end
                 end
             end
             FETCH: begin
-                stall = 1;
-                mem_re = 1;
+                stall_v = 1;
+                mem_re_v = 1;
                 if (mem_ready) begin
-                    stall = 0; // Release stall in the same cycle data is ready
-                    cpu_read_data = mem_read_data; // Bypass cache to CPU
-                    next_state = IDLE;
+                    stall_v = 0; 
+                    cpu_read_data_v = mem_read_data; 
+                    next_state_v = IDLE;
                 end
             end
             WRITE: begin
-                stall = 1;
-                mem_we = 1;
+                stall_v = 1;
+                mem_we_v = 1;
                 if (mem_ready) begin
-                    stall = 0;
-                    next_state = IDLE;
+                    stall_v = 0;
+                    next_state_v = IDLE;
                 end
             end
-            default: next_state = IDLE;
+            default: next_state_v = IDLE;
         endcase
+
+        stall = stall_v;
+        next_state = next_state_v;
+        mem_we = mem_we_v;
+        mem_re = mem_re_v;
+        mem_addr = mem_addr_v;
+        mem_write_data = mem_write_data_v;
+        cpu_read_data = cpu_read_data_v;
     end
 endmodule

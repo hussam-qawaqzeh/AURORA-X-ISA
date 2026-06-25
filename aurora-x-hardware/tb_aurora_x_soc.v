@@ -113,7 +113,7 @@ module tb_aurora_x_soc();
         #20 rst_n = 1;
         
         // Timeout
-        #20000; // shorter timeout for testing
+        #1000; // shorter timeout for testing
         $display("Timeout!");
         $finish;
     end
