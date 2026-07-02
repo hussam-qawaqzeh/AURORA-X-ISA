@@ -61,7 +61,25 @@ module ax_bus_scalable (
     reg [31:0] current_master; // Index of the currently granted master
     reg serving;
 
+    // Combinational routing wires
+    reg [31:0] grant_idx_comb;
+    wire [31:0] grant_idx = grant_idx_comb;
+    wire [63:0] active_addr = m_addr[(grant_idx*64) +: 64];
+    wire addr_valid = serving || (|m_req);
+    wire is_clint = addr_valid && (active_addr >= 64'h02000000 && active_addr < 64'h02010000);
+    wire is_uart  = addr_valid && (active_addr >= 64'h10000000 && active_addr < 64'h10001000);
+    wire is_gpio  = addr_valid && (active_addr >= 64'h20000000 && active_addr < 64'h20001000);
+    wire is_spi   = addr_valid && (active_addr >= 64'h30000000 && active_addr < 64'h30001000);
+    wire is_mem   = addr_valid && (!is_clint && !is_uart && !is_gpio && !is_spi);
+
+    wire active_slave_ready = is_clint ? s1_ready : 
+                              is_uart  ? s2_ready : 
+                              is_gpio  ? s3_ready : 
+                              is_spi   ? s4_ready : 
+                              s0_ready;
+
     integer i;
+    integer j;
 
     // Arbitration logic (Simple Priority / Round Robin)
     always @(posedge clk or negedge rst_n) begin
@@ -70,7 +88,7 @@ module ax_bus_scalable (
             serving <= 0;
         end else begin
             if (serving) begin
-                if (s0_ready || s1_ready || s2_ready || s3_ready || s4_ready) begin
+                if (active_slave_ready) begin
                     serving <= 0; // Transaction finished
                 end
             end else begin
@@ -87,8 +105,6 @@ module ax_bus_scalable (
         end
     end
 
-    reg [31:0] grant_idx_comb;
-    integer j;
     always @(*) begin
         if (serving) begin
             grant_idx_comb = current_master;
@@ -101,17 +117,6 @@ module ax_bus_scalable (
             end
         end
     end
-    
-    wire [31:0] grant_idx = grant_idx_comb;
-
-    wire [63:0] active_addr = m_addr[(grant_idx*64) +: 64];
-    wire addr_valid = (^active_addr === 1'bx) ? 1'b0 : 1'b1;
-    wire is_clint = addr_valid && (active_addr >= 64'h02000000 && active_addr < 64'h02010000);
-    wire is_uart  = addr_valid && (active_addr >= 64'h10000000 && active_addr < 64'h10001000);
-    wire is_gpio  = addr_valid && (active_addr >= 64'h20000000 && active_addr < 64'h20001000);
-    wire is_spi   = addr_valid && (active_addr >= 64'h30000000 && active_addr < 64'h30001000);
-    
-    wire is_mem = addr_valid && (!is_clint && !is_uart && !is_gpio && !is_spi);
 
     // MUXing inputs to Slaves
     assign s0_addr       = active_addr;

@@ -2,7 +2,9 @@
 pub enum Token {
     Int,
     If,
+    Else,
     While,
+    For,
     Return,
     Identifier(String),
     Number(i32),
@@ -15,6 +17,11 @@ pub enum Token {
     NotEq,
     LessThan,
     GreaterThan,
+    LessEqual,
+    GreaterEqual,
+    AndAnd,
+    OrOr,
+    Bang,
     LBrace,
     RBrace,
     LParen,
@@ -56,15 +63,49 @@ pub fn lex(code: &str) -> Vec<Token> {
                     tokens.push(Token::Assign);
                 }
             }
-            '<' => { tokens.push(Token::LessThan); chars.next(); }
-            '>' => { tokens.push(Token::GreaterThan); chars.next(); }
+            '<' => {
+                chars.next();
+                if let Some(&'=') = chars.peek() {
+                    tokens.push(Token::LessEqual);
+                    chars.next();
+                } else {
+                    tokens.push(Token::LessThan);
+                }
+            }
+            '>' => {
+                chars.next();
+                if let Some(&'=') = chars.peek() {
+                    tokens.push(Token::GreaterEqual);
+                    chars.next();
+                } else {
+                    tokens.push(Token::GreaterThan);
+                }
+            }
             '!' => {
                 chars.next();
                 if let Some(&'=') = chars.peek() {
                     tokens.push(Token::NotEq);
                     chars.next();
                 } else {
-                    panic!("Unexpected !");
+                    tokens.push(Token::Bang);
+                }
+            }
+            '&' => {
+                chars.next();
+                if let Some(&'&') = chars.peek() {
+                    tokens.push(Token::AndAnd);
+                    chars.next();
+                } else {
+                    panic!("Unexpected & (only && is supported)");
+                }
+            }
+            '|' => {
+                chars.next();
+                if let Some(&'|') = chars.peek() {
+                    tokens.push(Token::OrOr);
+                    chars.next();
+                } else {
+                    panic!("Unexpected | (only || is supported)");
                 }
             }
             '{' => { tokens.push(Token::LBrace); chars.next(); }
@@ -83,7 +124,7 @@ pub fn lex(code: &str) -> Vec<Token> {
                         break;
                     }
                 }
-                tokens.push(Token::Number(num_str.parse().unwrap()));
+                tokens.push(Token::Number(num_str.parse().unwrap_or(0)));
             }
             'a'..='z' | 'A'..='Z' | '_' => {
                 let mut id_str = String::new();
@@ -96,9 +137,11 @@ pub fn lex(code: &str) -> Vec<Token> {
                     }
                 }
                 match id_str.as_str() {
-                    "int" => tokens.push(Token::Int),
+                    "int" | "let" | "fn" => tokens.push(Token::Int),
                     "if" => tokens.push(Token::If),
+                    "else" => tokens.push(Token::Else),
                     "while" => tokens.push(Token::While),
+                    "for" => tokens.push(Token::For),
                     "return" => tokens.push(Token::Return),
                     _ => tokens.push(Token::Identifier(id_str)),
                 }

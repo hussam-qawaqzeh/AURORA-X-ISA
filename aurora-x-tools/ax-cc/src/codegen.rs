@@ -1,4 +1,4 @@
-use crate::parser::{ASTNode, Expression, Function, Op, Statement};
+use crate::parser::{ASTNode, Expression, Function, Op, Statement, UnaryOp};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -8,7 +8,12 @@ enum Inst {
     Sub(u8, u8, u8),
     Mul(u8, u8, u8),
     Div(u8, u8, u8),
+    Xor(u8, u8, u8),
+    And(u8, u8, u8),
+    Or(u8, u8, u8),
     Shr(u8, u8, u8),
+    Slt(u8, u8, u8),
+    Sltu(u8, u8, u8),
     Branch(u8, u8, String), // BEQ
     Jump(String),
     CsrWrite(u8, u16),
@@ -19,6 +24,7 @@ pub struct CodeGen {
     var_to_reg: HashMap<String, u8>,
     next_reg: u8,
     label_count: usize,
+    current_func: String,
 }
 
 impl CodeGen {
@@ -27,6 +33,7 @@ impl CodeGen {
             var_to_reg: HashMap::new(),
             next_reg: 1, // R1 to R24 for locals
             label_count: 0,
+            current_func: String::new(),
         }
     }
 
@@ -60,6 +67,7 @@ impl CodeGen {
     fn gen_func(&mut self, func: &Function, asm: &mut Vec<Inst>) {
         self.var_to_reg.clear();
         self.next_reg = 1;
+        self.current_func = func.name.clone();
         
         // Setup args
         for arg in &func.args {
@@ -93,16 +101,29 @@ impl CodeGen {
                     asm.push(Inst::Addi(r, res_r, 0));
                 }
             }
-            Statement::If(cond, body) => {
-                let end_label = self.new_label("if_end");
+            Statement::If(cond, body, else_body) => {
                 let cond_reg = self.gen_expr(cond, asm, 0);
-                asm.push(Inst::Branch(cond_reg, 0, end_label.clone()));
-                
-                for s in body {
-                    self.gen_stmt(s, asm);
+                if let Some(else_stmts) = else_body {
+                    let else_label = self.new_label("if_else");
+                    let end_label = self.new_label("if_end");
+                    asm.push(Inst::Branch(cond_reg, 0, else_label.clone()));
+                    for s in body {
+                        self.gen_stmt(s, asm);
+                    }
+                    asm.push(Inst::Jump(end_label.clone()));
+                    asm.push(Inst::Label(else_label));
+                    for s in else_stmts {
+                        self.gen_stmt(s, asm);
+                    }
+                    asm.push(Inst::Label(end_label));
+                } else {
+                    let end_label = self.new_label("if_end");
+                    asm.push(Inst::Branch(cond_reg, 0, end_label.clone()));
+                    for s in body {
+                        self.gen_stmt(s, asm);
+                    }
+                    asm.push(Inst::Label(end_label));
                 }
-                
-                asm.push(Inst::Label(end_label));
             }
             Statement::While(cond, body) => {
                 let start_label = self.new_label("while_start");
@@ -120,9 +141,34 @@ impl CodeGen {
                 asm.push(Inst::Jump(start_label));
                 asm.push(Inst::Label(end_label));
             }
+            Statement::For(init, cond, step, body) => {
+                let start_label = self.new_label("for_start");
+                let end_label = self.new_label("for_end");
+                
+                self.gen_stmt(init, asm);
+                
+                asm.push(Inst::Label(start_label.clone()));
+                
+                let cond_reg = self.gen_expr(cond, asm, 0);
+                asm.push(Inst::Branch(cond_reg, 0, end_label.clone()));
+                
+                for s in body {
+                    self.gen_stmt(s, asm);
+                }
+                
+                self.gen_stmt(step, asm);
+                
+                asm.push(Inst::Jump(start_label));
+                asm.push(Inst::Label(end_label));
+            }
             Statement::Return(expr) => {
                 let res_r = self.gen_expr(expr, asm, 0);
-                asm.push(Inst::CsrWrite(res_r, 0x700));
+                if self.current_func == "main" {
+                    asm.push(Inst::CsrWrite(res_r, 0x700));
+                } else {
+                    asm.push(Inst::Addi(1, res_r, 0)); // Return result in R1
+                    // Since dynamic jump is not in hardware, compile return as a simple exit or no-op
+                }
             }
             Statement::CallStmt(name, args) => {
                 if name == "print" && args.len() == 1 {
@@ -139,16 +185,36 @@ impl CodeGen {
         match expr {
             Expression::Number(n) => {
                 let r = 25 + temp_idx; // Temp register starts at 25
-                if r > 31 { panic!("Out of temp registers!"); }
+                if r > 30 { panic!("Out of temp registers!"); } // R31 is reserved for local scratch
                 asm.push(Inst::Addi(r, 0, *n));
                 r
             }
             Expression::Variable(name) => {
                 self.get_reg(name)
             }
+            Expression::UnaryOp(op, inner) => {
+                let res_reg = 25 + temp_idx;
+                if res_reg > 30 { panic!("Out of temp registers!"); }
+                let inner_reg = self.gen_expr(inner, asm, temp_idx);
+                match op {
+                    UnaryOp::Minus => {
+                        asm.push(Inst::Sub(res_reg, 0, inner_reg));
+                    }
+                    UnaryOp::Not => {
+                        // !x is equivalent to x == 0
+                        // SLTU scratch, R0, inner_reg (1 if inner_reg != 0, else 0)
+                        // XOR res_reg, scratch, 1
+                        let scratch = 31;
+                        asm.push(Inst::Sltu(scratch, 0, inner_reg));
+                        asm.push(Inst::Addi(res_reg, 0, 1));
+                        asm.push(Inst::Xor(res_reg, scratch, res_reg));
+                    }
+                }
+                res_reg
+            }
             Expression::BinaryOp(op, left, right) => {
                 let res_reg = 25 + temp_idx;
-                if res_reg > 31 { panic!("Out of temp registers!"); }
+                if res_reg > 30 { panic!("Out of temp registers!"); }
                 
                 let l_reg = self.gen_expr(left, asm, temp_idx);
                 let r_reg = self.gen_expr(right, asm, temp_idx + 1);
@@ -179,23 +245,60 @@ impl CodeGen {
                         asm.push(Inst::Label(end_label));
                     }
                     Op::Lt => {
-                        asm.push(Inst::Sub(res_reg, l_reg, r_reg));
-                        let shift_amt_reg = 25 + temp_idx + 1;
-                        if shift_amt_reg > 31 { panic!("Out of temp registers!"); }
-                        asm.push(Inst::Addi(shift_amt_reg, 0, 63));
-                        asm.push(Inst::Shr(res_reg, res_reg, shift_amt_reg));
+                        asm.push(Inst::Slt(res_reg, l_reg, r_reg));
                     }
                     Op::Gt => {
-                        asm.push(Inst::Sub(res_reg, r_reg, l_reg));
-                        let shift_amt_reg = 25 + temp_idx + 1;
-                        if shift_amt_reg > 31 { panic!("Out of temp registers!"); }
-                        asm.push(Inst::Addi(shift_amt_reg, 0, 63));
-                        asm.push(Inst::Shr(res_reg, res_reg, shift_amt_reg));
+                        asm.push(Inst::Slt(res_reg, r_reg, l_reg));
+                    }
+                    Op::Le => {
+                        // a <= b is equivalent to !(a > b) -> !(b < a)
+                        let scratch = 31;
+                        asm.push(Inst::Slt(scratch, r_reg, l_reg));
+                        asm.push(Inst::Addi(res_reg, 0, 1));
+                        asm.push(Inst::Xor(res_reg, scratch, res_reg));
+                    }
+                    Op::Ge => {
+                        // a >= b is equivalent to !(a < b)
+                        let scratch = 31;
+                        asm.push(Inst::Slt(scratch, l_reg, r_reg));
+                        asm.push(Inst::Addi(res_reg, 0, 1));
+                        asm.push(Inst::Xor(res_reg, scratch, res_reg));
+                    }
+                    Op::And => {
+                        let false_label = self.new_label("and_false");
+                        let end_label = self.new_label("and_end");
+                        asm.push(Inst::Branch(l_reg, 0, false_label.clone()));
+                        asm.push(Inst::Branch(r_reg, 0, false_label.clone()));
+                        asm.push(Inst::Addi(res_reg, 0, 1)); // true
+                        asm.push(Inst::Jump(end_label.clone()));
+                        asm.push(Inst::Label(false_label));
+                        asm.push(Inst::Addi(res_reg, 0, 0)); // false
+                        asm.push(Inst::Label(end_label));
+                    }
+                    Op::Or => {
+                        let check_right_label = self.new_label("or_check_right");
+                        let end_label = self.new_label("or_end");
+                        asm.push(Inst::Addi(res_reg, 0, 0)); // default to false
+                        asm.push(Inst::Branch(l_reg, 0, check_right_label.clone()));
+                        asm.push(Inst::Addi(res_reg, 0, 1)); // true
+                        asm.push(Inst::Jump(end_label.clone()));
+                        asm.push(Inst::Label(check_right_label));
+                        asm.push(Inst::Branch(r_reg, 0, end_label.clone()));
+                        asm.push(Inst::Addi(res_reg, 0, 1)); // true
+                        asm.push(Inst::Label(end_label));
                     }
                 }
                 res_reg
             }
-            Expression::CallExpr(_, _) => panic!("Function calls in expressions not implemented"),
+            Expression::CallExpr(name, args) => {
+                if name == "print" && args.len() == 1 {
+                    let r = self.gen_expr(&args[0], asm, temp_idx);
+                    asm.push(Inst::CsrWrite(r, 0x701));
+                    r
+                } else {
+                    panic!("Function calls in expressions not implemented");
+                }
+            }
         }
     }
 
@@ -241,8 +344,28 @@ impl CodeGen {
                     resolved.push_str(&format!("    DIV.X R{}, R{}, R{}\n", rd, rs1, rs2));
                     pc += 1;
                 }
+                Inst::Xor(rd, rs1, rs2) => {
+                    resolved.push_str(&format!("    XOR R{}, R{}, R{}\n", rd, rs1, rs2));
+                    pc += 1;
+                }
+                Inst::And(rd, rs1, rs2) => {
+                    resolved.push_str(&format!("    AND R{}, R{}, R{}\n", rd, rs1, rs2));
+                    pc += 1;
+                }
+                Inst::Or(rd, rs1, rs2) => {
+                    resolved.push_str(&format!("    OR R{}, R{}, R{}\n", rd, rs1, rs2));
+                    pc += 1;
+                }
                 Inst::Shr(rd, rs1, rs2) => {
                     resolved.push_str(&format!("    SHR R{}, R{}, R{}\n", rd, rs1, rs2));
+                    pc += 1;
+                }
+                Inst::Slt(rd, rs1, rs2) => {
+                    resolved.push_str(&format!("    SLT R{}, R{}, R{}\n", rd, rs1, rs2));
+                    pc += 1;
+                }
+                Inst::Sltu(rd, rs1, rs2) => {
+                    resolved.push_str(&format!("    SLTU R{}, R{}, R{}\n", rd, rs1, rs2));
                     pc += 1;
                 }
                 Inst::Branch(rs1, rs2, label) => {

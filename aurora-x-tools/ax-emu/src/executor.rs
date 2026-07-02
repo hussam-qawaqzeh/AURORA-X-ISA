@@ -31,6 +31,16 @@ pub fn translate(cpu: &mut Cpu, mem: &mut Memory, vaddr: u64, is_write: bool) ->
     Ok((ppn << 12) | offset)
 }
 
+fn enter_trap(cpu: &mut Cpu, cause: u64) {
+    let handler = cpu.read_csr(0x020);
+    if handler != 0 {
+        cpu.write_csr(0x018, cpu.pc);
+        cpu.write_csr(0x008, cause);
+        cpu._pl = 3; // Elevate privilege to PL3
+        cpu.pc = handler.wrapping_sub(4);
+    }
+}
+
 pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
     match dec.opcode {
         0x01 => {
@@ -112,12 +122,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
             let base = cpu.read_reg(dec.rs1);
             let vaddr = base.wrapping_add(dec.imm14 as i64 as u64);
             if vaddr % 8 != 0 {
-                let handler = cpu.read_csr(0x020);
-                if handler != 0 {
-                    cpu.write_csr(0x018, cpu.pc);
-                    cpu.write_csr(0x008, 0x02); // Alignment Fault
-                    cpu.pc = handler.wrapping_sub(4);
-                }
+                enter_trap(cpu, 0x02);
             } else {
                 match translate(cpu, mem, vaddr, false) {
                     Ok(paddr) => {
@@ -125,12 +130,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
                         cpu.write_reg(dec.rd, val);
                     }
                     Err(cause) => {
-                        let handler = cpu.read_csr(0x020);
-                        if handler != 0 {
-                            cpu.write_csr(0x018, cpu.pc);
-                            cpu.write_csr(0x008, cause as u64);
-                            cpu.pc = handler.wrapping_sub(4);
-                        }
+                        enter_trap(cpu, cause as u64);
                     }
                 }
             }
@@ -140,12 +140,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
             let base = cpu.read_reg(dec.rd);
             let vaddr = base.wrapping_add(dec.imm14 as i64 as u64);
             if vaddr % 8 != 0 {
-                let handler = cpu.read_csr(0x020);
-                if handler != 0 {
-                    cpu.write_csr(0x018, cpu.pc);
-                    cpu.write_csr(0x008, 0x02); // Alignment Fault
-                    cpu.pc = handler.wrapping_sub(4);
-                }
+                enter_trap(cpu, 0x02);
             } else {
                 match translate(cpu, mem, vaddr, true) {
                     Ok(paddr) => {
@@ -153,12 +148,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
                         mem.write_u64(paddr as usize, val);
                     }
                     Err(cause) => {
-                        let handler = cpu.read_csr(0x020);
-                        if handler != 0 {
-                            cpu.write_csr(0x018, cpu.pc);
-                            cpu.write_csr(0x008, cause as u64);
-                            cpu.pc = handler.wrapping_sub(4);
-                        }
+                        enter_trap(cpu, cause as u64);
                     }
                 }
             }
@@ -168,7 +158,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
             let val1 = cpu.read_reg(dec.rd);
             let val2 = cpu.read_reg(dec.rs1);
             if val1 == val2 {
-                let offset = (dec.imm14 << 2) as i16 as i64;
+                let offset = (dec.imm14 as i64) << 2;
                 cpu.pc = cpu.pc.wrapping_add(offset as u64).wrapping_sub(4);
             }
         }
@@ -177,7 +167,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
             let val1 = cpu.read_reg(dec.rd);
             let val2 = cpu.read_reg(dec.rs1);
             if val1 != val2 {
-                let offset = (dec.imm14 << 2) as i16 as i64;
+                let offset = (dec.imm14 as i64) << 2;
                 cpu.pc = cpu.pc.wrapping_add(offset as u64).wrapping_sub(4);
             }
         }
@@ -186,7 +176,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
             let val1 = cpu.read_reg(dec.rd) as i64;
             let val2 = cpu.read_reg(dec.rs1) as i64;
             if val1 < val2 {
-                let offset = (dec.imm14 << 2) as i16 as i64;
+                let offset = (dec.imm14 as i64) << 2;
                 cpu.pc = cpu.pc.wrapping_add(offset as u64).wrapping_sub(4);
             }
         }
@@ -195,7 +185,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
             let val1 = cpu.read_reg(dec.rd) as i64;
             let val2 = cpu.read_reg(dec.rs1) as i64;
             if val1 >= val2 {
-                let offset = (dec.imm14 << 2) as i16 as i64;
+                let offset = (dec.imm14 as i64) << 2;
                 cpu.pc = cpu.pc.wrapping_add(offset as u64).wrapping_sub(4);
             }
         }
@@ -204,7 +194,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
             let val1 = cpu.read_reg(dec.rd);
             let val2 = cpu.read_reg(dec.rs1);
             if val1 < val2 {
-                let offset = (dec.imm14 << 2) as i16 as i64;
+                let offset = (dec.imm14 as i64) << 2;
                 cpu.pc = cpu.pc.wrapping_add(offset as u64).wrapping_sub(4);
             }
         }
@@ -213,25 +203,27 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
             let val1 = cpu.read_reg(dec.rd);
             let val2 = cpu.read_reg(dec.rs1);
             if val1 >= val2 {
-                let offset = (dec.imm14 << 2) as i16 as i64;
+                let offset = (dec.imm14 as i64) << 2;
                 cpu.pc = cpu.pc.wrapping_add(offset as u64).wrapping_sub(4);
             }
         }
         0x41 => {
             // JUMP.X
             cpu.write_reg(dec.rd, cpu.pc + 4); 
-            let offset = ((dec.imm19 << 13) as i32 >> 13) as i64 * 4;
+            let offset = (dec.imm19 as i64) * 4;
             cpu.pc = cpu.pc.wrapping_add(offset as u64).wrapping_sub(4);
         }
         0x42 => {
             // CSR.READ
-            if dec.csr_addr < 0x400 && cpu._pl < 3 {
-                let handler = cpu.read_csr(0x020);
-                if handler != 0 {
-                    cpu.write_csr(0x018, cpu.pc);
-                    cpu.write_csr(0x008, 0x04); // Privileged Instruction Fault
-                    cpu.pc = handler.wrapping_sub(4);
-                }
+            let required_pl = if dec.csr_addr < 0x200 {
+                3 // Machine mode required
+            } else if dec.csr_addr < 0x300 {
+                1 // Supervisor mode required
+            } else {
+                0 // User mode required
+            };
+            if cpu._pl < required_pl {
+                enter_trap(cpu, 0x04);
             } else {
                 let val = cpu.read_csr(dec.csr_addr);
                 cpu.write_reg(dec.rd, val);
@@ -239,13 +231,15 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
         }
         0x43 => {
             // CSR.WRITE
-            if dec.csr_addr < 0x400 && cpu._pl < 3 {
-                let handler = cpu.read_csr(0x020);
-                if handler != 0 {
-                    cpu.write_csr(0x018, cpu.pc);
-                    cpu.write_csr(0x008, 0x04);
-                    cpu.pc = handler.wrapping_sub(4);
-                }
+            let required_pl = if dec.csr_addr < 0x200 {
+                3
+            } else if dec.csr_addr < 0x300 {
+                1
+            } else {
+                0
+            };
+            if cpu._pl < required_pl {
+                enter_trap(cpu, 0x04);
             } else {
                 let val = cpu.read_reg(dec.rd);
                 if dec.csr_addr == 0x701 {
@@ -256,30 +250,31 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
         }
         0x44 => {
             // ECALL
-            let handler = cpu.read_csr(0x020); // AX_EXCEPTION_VECTOR
-            if handler == 0 {
-                eprintln!("Unhandled ECALL Exception at PC=0x{:X}", cpu.pc);
-                std::process::exit(1);
-            }
-            cpu.write_csr(0x018, cpu.pc + 4); // AX_EPC (return to next inst)
-            cpu.write_csr(0x008, 0x05); // AX_CAUSE = System Call
-            cpu._pl = 3; // Elevate Privilege
-            cpu.pc = handler.wrapping_sub(4);
+            let ret_pc = cpu.pc + 4;
+            enter_trap(cpu, 0x05);
+            cpu.write_csr(0x018, ret_pc);
         }
         0x45 => {
             // EXRET
             if cpu._pl < 3 {
-                let handler = cpu.read_csr(0x020);
-                if handler != 0 {
-                    cpu.write_csr(0x018, cpu.pc);
-                    cpu.write_csr(0x008, 0x04);
-                    cpu.pc = handler.wrapping_sub(4);
-                }
+                enter_trap(cpu, 0x04);
             } else {
                 let epc = cpu.read_csr(0x018);
                 cpu._pl = 0; // Drop Privilege
                 cpu.pc = epc.wrapping_sub(4);
             }
+        }
+        0x50 => {
+            // FADD.X
+            let val1 = f64::from_bits(cpu.read_reg(dec.rs1));
+            let val2 = f64::from_bits(cpu.read_reg(dec.rs2));
+            cpu.write_reg(dec.rd, (val1 + val2).to_bits());
+        }
+        0x51 => {
+            // FMUL.X
+            let val1 = f64::from_bits(cpu.read_reg(dec.rs1));
+            let val2 = f64::from_bits(cpu.read_reg(dec.rs2));
+            cpu.write_reg(dec.rd, (val1 * val2).to_bits());
         }
         0x54 => {
             // VCMP.GT (Vector Compare Greater Than)
@@ -302,12 +297,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
             let base = cpu.read_reg(dec.rs1);
             let vaddr = base.wrapping_add(dec.imm14 as i64 as u64);
             if vaddr % 8 != 0 {
-                let handler = cpu.read_csr(0x020);
-                if handler != 0 {
-                    cpu.write_csr(0x018, cpu.pc);
-                    cpu.write_csr(0x008, 0x02); // Alignment Fault
-                    cpu.pc = handler.wrapping_sub(4);
-                }
+                enter_trap(cpu, 0x02);
             } else {
                 match translate(cpu, mem, vaddr, false) {
                     Ok(paddr) => {
@@ -320,12 +310,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
                         }
                     }
                     Err(cause) => {
-                        let handler = cpu.read_csr(0x020);
-                        if handler != 0 {
-                            cpu.write_csr(0x018, cpu.pc);
-                            cpu.write_csr(0x008, cause as u64);
-                            cpu.pc = handler.wrapping_sub(4);
-                        }
+                        enter_trap(cpu, cause as u64);
                     }
                 }
             }
@@ -336,12 +321,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
             let base = cpu.read_reg(dec.rd);
             let vaddr = base.wrapping_add(dec.imm14 as i64 as u64);
             if vaddr % 8 != 0 {
-                let handler = cpu.read_csr(0x020);
-                if handler != 0 {
-                    cpu.write_csr(0x018, cpu.pc);
-                    cpu.write_csr(0x008, 0x02); // Alignment Fault
-                    cpu.pc = handler.wrapping_sub(4);
-                }
+                enter_trap(cpu, 0x02);
             } else {
                 match translate(cpu, mem, vaddr, true) {
                     Ok(paddr) => {
@@ -356,12 +336,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
                         }
                     }
                     Err(cause) => {
-                        let handler = cpu.read_csr(0x020);
-                        if handler != 0 {
-                            cpu.write_csr(0x018, cpu.pc);
-                            cpu.write_csr(0x008, cause as u64);
-                            cpu.pc = handler.wrapping_sub(4);
-                        }
+                        enter_trap(cpu, cause as u64);
                     }
                 }
             }
@@ -435,14 +410,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
         }
         _ => {
             // Illegal Instruction
-            let handler = cpu.read_csr(0x020);
-            if handler == 0 {
-                eprintln!("Unhandled Illegal Instruction at PC=0x{:X}", cpu.pc);
-                std::process::exit(1);
-            }
-            cpu.write_csr(0x018, cpu.pc);
-            cpu.write_csr(0x008, 0x00); // 0x00 is Illegal Inst
-            cpu.pc = handler.wrapping_sub(4);
+            enter_trap(cpu, 0x00);
         }
     }
 }

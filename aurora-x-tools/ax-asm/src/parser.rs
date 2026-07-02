@@ -15,6 +15,12 @@ pub fn parse_line(line: &str, labels: &HashMap<String, u32>, current_pc: u32) ->
     let mnemonic = parts[0];
     
     match mnemonic {
+        ".word" => {
+            if parts.len() >= 2 {
+                let val = parse_hex_or_int(parts[1]).unwrap_or(0) as u32;
+                return Some(Instruction::Raw { val });
+            }
+        }
         "ADD.X" => {
             if parts.len() >= 4 {
                 let rd = Reg::parse(parts[1])?;
@@ -75,11 +81,23 @@ pub fn parse_line(line: &str, labels: &HashMap<String, u32>, current_pc: u32) ->
                 return Some(Instruction::Sra { rd, rs1, rs2 });
             }
         }
+        "FADD.X" => {
+            if parts.len() >= 4 {
+                let rd = Reg::parse(parts[1])?; let rs1 = Reg::parse(parts[2])?; let rs2 = Reg::parse(parts[3])?;
+                return Some(Instruction::FAdd { rd, rs1, rs2 });
+            }
+        }
+        "FMUL.X" => {
+            if parts.len() >= 4 {
+                let rd = Reg::parse(parts[1])?; let rs1 = Reg::parse(parts[2])?; let rs2 = Reg::parse(parts[3])?;
+                return Some(Instruction::FMul { rd, rs1, rs2 });
+            }
+        }
         "LOAD.X" => {
             if parts.len() >= 4 {
                 let rd = Reg::parse(parts[1])?;
                 let rs1 = Reg::parse(parts[2])?;
-                let imm = parse_hex_or_int(parts[3]).unwrap_or(0) as i16;
+                let imm = parse_imm14(parts[3]);
                 return Some(Instruction::LoadX { rd, rs1, imm });
             } else if parts.len() >= 3 {
                 let rd = Reg::parse(parts[1])?;
@@ -87,8 +105,14 @@ pub fn parse_line(line: &str, labels: &HashMap<String, u32>, current_pc: u32) ->
                 let mem_op = mem_op.trim_start_matches('[').trim_end_matches(']');
                 if let Some(plus_idx) = mem_op.find('+') {
                     let rs1 = Reg::parse(&mem_op[..plus_idx])?;
-                    let imm = mem_op[plus_idx+1..].parse::<i16>().unwrap_or(0);
-                    return Some(Instruction::LoadX { rd, rs1, imm });
+                    let imm_val = mem_op[plus_idx+1..].parse::<i32>().unwrap_or(0);
+                    check_imm14_limit(imm_val);
+                    return Some(Instruction::LoadX { rd, rs1, imm: imm_val as i16 });
+                } else if let Some(minus_idx) = mem_op.find('-') {
+                    let rs1 = Reg::parse(&mem_op[..minus_idx])?;
+                    let imm_val = -mem_op[minus_idx+1..].parse::<i32>().unwrap_or(0);
+                    check_imm14_limit(imm_val);
+                    return Some(Instruction::LoadX { rd, rs1, imm: imm_val as i16 });
                 } else {
                     let rs1 = Reg::parse(&mem_op)?;
                     return Some(Instruction::LoadX { rd, rs1, imm: 0 });
@@ -99,7 +123,7 @@ pub fn parse_line(line: &str, labels: &HashMap<String, u32>, current_pc: u32) ->
             if parts.len() >= 4 {
                 let rs1 = Reg::parse(parts[1])?; // Base register
                 let rs2 = Reg::parse(parts[2])?; // Data register
-                let imm = parse_hex_or_int(parts[3]).unwrap_or(0) as i16;
+                let imm = parse_imm14(parts[3]);
                 return Some(Instruction::StoreX { rs2, rs1, imm });
             } else if parts.len() >= 3 {
                 let rs2 = Reg::parse(parts[1])?; // value to store
@@ -107,8 +131,14 @@ pub fn parse_line(line: &str, labels: &HashMap<String, u32>, current_pc: u32) ->
                 let mem_op = mem_op.trim_start_matches('[').trim_end_matches(']');
                 if let Some(plus_idx) = mem_op.find('+') {
                     let rs1 = Reg::parse(&mem_op[..plus_idx])?;
-                    let imm = mem_op[plus_idx+1..].parse::<i16>().unwrap_or(0);
-                    return Some(Instruction::StoreX { rs2, rs1, imm });
+                    let imm_val = mem_op[plus_idx+1..].parse::<i32>().unwrap_or(0);
+                    check_imm14_limit(imm_val);
+                    return Some(Instruction::StoreX { rs2, rs1, imm: imm_val as i16 });
+                } else if let Some(minus_idx) = mem_op.find('-') {
+                    let rs1 = Reg::parse(&mem_op[..minus_idx])?;
+                    let imm_val = -mem_op[minus_idx+1..].parse::<i32>().unwrap_or(0);
+                    check_imm14_limit(imm_val);
+                    return Some(Instruction::StoreX { rs2, rs1, imm: imm_val as i16 });
                 } else {
                     let rs1 = Reg::parse(&mem_op)?;
                     return Some(Instruction::StoreX { rs2, rs1, imm: 0 });
@@ -215,8 +245,14 @@ pub fn parse_line(line: &str, labels: &HashMap<String, u32>, current_pc: u32) ->
                 let mem_op = mem_op.trim_start_matches('[').trim_end_matches(']');
                 if let Some(plus_idx) = mem_op.find('+') {
                     let rs1 = Reg::parse(&mem_op[..plus_idx])?;
-                    let imm = mem_op[plus_idx+1..].parse::<i16>().unwrap_or(0);
-                    return Some(Instruction::VLoad { vd, rs1, imm });
+                    let imm_val = mem_op[plus_idx+1..].parse::<i32>().unwrap_or(0);
+                    check_imm14_limit(imm_val);
+                    return Some(Instruction::VLoad { vd, rs1, imm: imm_val as i16 });
+                } else if let Some(minus_idx) = mem_op.find('-') {
+                    let rs1 = Reg::parse(&mem_op[..minus_idx])?;
+                    let imm_val = -mem_op[minus_idx+1..].parse::<i32>().unwrap_or(0);
+                    check_imm14_limit(imm_val);
+                    return Some(Instruction::VLoad { vd, rs1, imm: imm_val as i16 });
                 } else {
                     let rs1 = Reg::parse(&mem_op)?;
                     return Some(Instruction::VLoad { vd, rs1, imm: 0 });
@@ -230,44 +266,50 @@ pub fn parse_line(line: &str, labels: &HashMap<String, u32>, current_pc: u32) ->
                 let mem_op = mem_op.trim_start_matches('[').trim_end_matches(']');
                 if let Some(plus_idx) = mem_op.find('+') {
                     let rs1 = Reg::parse(&mem_op[..plus_idx])?;
-                    let imm = mem_op[plus_idx+1..].parse::<i16>().unwrap_or(0);
-                    return Some(Instruction::VStore { vs2, rs1, imm });
+                    let imm_val = mem_op[plus_idx+1..].parse::<i32>().unwrap_or(0);
+                    check_imm14_limit(imm_val);
+                    return Some(Instruction::VStore { vs2, rs1, imm: imm_val as i16 });
+                } else if let Some(minus_idx) = mem_op.find('-') {
+                    let rs1 = Reg::parse(&mem_op[..minus_idx])?;
+                    let imm_val = -mem_op[minus_idx+1..].parse::<i32>().unwrap_or(0);
+                    check_imm14_limit(imm_val);
+                    return Some(Instruction::VStore { vs2, rs1, imm: imm_val as i16 });
                 } else {
                     let rs1 = Reg::parse(&mem_op)?;
                     return Some(Instruction::VStore { vs2, rs1, imm: 0 });
                 }
             }
         }
-        "VADD" => {
+        "VADD" | "VADD.M" => {
             if parts.len() >= 4 {
                 let vd = Reg::parse(parts[1])?;
                 let vs1 = Reg::parse(parts[2])?;
                 let vs2 = Reg::parse(parts[3])?;
-                return Some(Instruction::VAdd { vd, vs1, vs2 });
+                return Some(Instruction::VAdd { vd, vs1, vs2, masked: parts[0] == "VADD.M" });
             }
         }
-        "VMUL" => {
+        "VMUL" | "VMUL.M" => {
             if parts.len() >= 4 {
                 let vd = Reg::parse(parts[1])?;
                 let vs1 = Reg::parse(parts[2])?;
                 let vs2 = Reg::parse(parts[3])?;
-                return Some(Instruction::VMul { vd, vs1, vs2 });
+                return Some(Instruction::VMul { vd, vs1, vs2, masked: parts[0] == "VMUL.M" });
             }
         }
-        "VFMA" => {
+        "VFMA" | "VFMA.M" => {
             if parts.len() >= 4 {
                 let vd = Reg::parse(parts[1])?;
                 let vs1 = Reg::parse(parts[2])?;
                 let vs2 = Reg::parse(parts[3])?;
-                return Some(Instruction::VFma { vd, vs1, vs2 });
+                return Some(Instruction::VFma { vd, vs1, vs2, masked: parts[0] == "VFMA.M" });
             }
         }
-        "VPERM" => {
+        "VPERM" | "VPERM.M" => {
             if parts.len() >= 4 {
                 let vd = Reg::parse(parts[1])?;
                 let vs1 = Reg::parse(parts[2])?;
                 let vs2 = Reg::parse(parts[3])?;
-                return Some(Instruction::VPerm { vd, vs1, vs2 });
+                return Some(Instruction::VPerm { vd, vs1, vs2, masked: parts[0] == "VPERM.M" });
             }
         }
         "VCMP.GT" => {
@@ -285,34 +327,52 @@ pub fn parse_line(line: &str, labels: &HashMap<String, u32>, current_pc: u32) ->
 
 fn parse_hex_or_int(s: &str) -> Option<i32> {
     let res = if s.starts_with("0x") || s.starts_with("0X") {
-        i32::from_str_radix(&s[2..], 16).ok()
+        u32::from_str_radix(&s[2..], 16).map(|v| v as i32).ok()
     } else {
         s.parse::<i32>().ok()
     };
     if res.is_none() {
-        println!("Failed to parse imm: '{}'", s);
+        println!("Failed to parse imm: '{}' (len={}, bytes={:?})", s, s.len(), s.as_bytes());
     }
     res
 }
 
-fn parse_branch_target(s: &str, labels: &HashMap<String, u32>, current_pc: u32) -> Option<i16> {
-    if let Some(&target_pc) = labels.get(s) {
-        let diff = target_pc as i32 - current_pc as i32;
-        Some((diff / 4) as i16)
-    } else {
-        parse_hex_or_int(s).map(|v| v as i16)
+fn check_imm14_limit(val: i32) {
+    if val < -8192 || val > 8191 {
+        eprintln!("[Warning] Immediate value {} exceeds signed 14-bit range (-8192 to 8191)", val);
     }
 }
 
-fn parse_jump_target(s: &str, labels: &HashMap<String, u32>, current_pc: u32) -> Option<i32> {
-    if let Some(&target_pc) = labels.get(s) {
+fn parse_imm14(s: &str) -> i16 {
+    let val = parse_hex_or_int(s).unwrap_or(0);
+    check_imm14_limit(val);
+    val as i16
+}
+
+fn parse_branch_target(s: &str, labels: &HashMap<String, u32>, current_pc: u32) -> Option<i16> {
+    let val = if let Some(&target_pc) = labels.get(s) {
         let diff = target_pc as i32 - current_pc as i32;
-        Some(diff / 4)
+        diff / 4
+    } else {
+        parse_hex_or_int(s).unwrap_or(0)
+    };
+    check_imm14_limit(val);
+    Some(val as i16)
+}
+
+fn parse_jump_target(s: &str, labels: &HashMap<String, u32>, current_pc: u32) -> Option<i32> {
+    let val = if let Some(&target_pc) = labels.get(s) {
+        let diff = target_pc as i32 - current_pc as i32;
+        diff / 4
     } else {
         if s.starts_with("0x") || s.starts_with("0X") {
-            i32::from_str_radix(&s[2..], 16).ok()
+            i32::from_str_radix(&s[2..], 16).unwrap_or(0)
         } else {
-            s.parse::<i32>().ok()
+            s.parse::<i32>().unwrap_or(0)
         }
+    };
+    if val < -262144 || val > 262143 {
+        eprintln!("[Warning] Jump target/offset {} exceeds signed 19-bit range (-262144 to 262143)", val);
     }
+    Some(val)
 }

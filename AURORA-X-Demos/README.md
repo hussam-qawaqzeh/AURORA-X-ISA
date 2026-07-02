@@ -10,6 +10,7 @@ Open a PowerShell terminal in this folder and run the execution script with the 
 .\Run-Demo.ps1 01_Exception_Syscall.s
 .\Run-Demo.ps1 02_Vector_Math.s
 .\Run-Demo.ps1 03_AI_Polynomial.s
+.\Run-Demo.ps1 04_OS_Kernel.s
 ```
 
 ## Demos Explained
@@ -22,3 +23,6 @@ Demonstrates the **AX-Vec** extension. It loads two arrays into massive 2048-bit
 
 ### `03_AI_Polynomial.s`
 The ultimate AI benchmark. It evaluates a mathematical polynomial `y = A + X * (B + C*X)` on an array of numbers using Fused Multiply-Add (`VFMA`) and Vector Multiply (`VMUL`), proving the architecture's readiness for Neural Network processing.
+
+### `04_OS_Kernel.s`
+Demonstrates virtual memory translation, page tables, and exceptions. It boots in Machine Mode, builds a page table at physical address 1000, maps virtual address `0x4000` to physical address `0x2000`, enables the MMU, and drops privilege to User Mode. The user application executes bitwise arithmetic, loads data through the MMU virtual mapping, and triggers a misaligned memory exception that is routed back to the kernel trap handler.

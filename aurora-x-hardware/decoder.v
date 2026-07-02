@@ -109,10 +109,10 @@ module decoder (
             8'h09: begin // ADDI
                 RegWrite = 1; ALUSrc_B = 1; ALU_Op = 4'b0000; // ADD
             end
-            8'h10: begin // FADD.X
+            8'h50: begin // FADD.X
                 RegWrite = 1; ALUSrc_B = 0; FpuOp = 1; Fpu_ALU_Op = 0;
             end
-            8'h11: begin // FMUL.X
+            8'h51: begin // FMUL.X
                 RegWrite = 1; ALUSrc_B = 0; FpuOp = 1; Fpu_ALU_Op = 1;
             end
             8'h21: begin // LOAD.X
@@ -150,7 +150,7 @@ module decoder (
                 Jump = 1; RegWrite = 1; MemtoReg = 2'b10; // PC+4
             end
             8'h42: begin // CSR.READ
-                CSR_Read = 1; RegWrite = 1; MemtoReg = 2'b11;
+                CSR_Read = 1; RegWrite = 1; MemtoReg = 2'b00;
             end
             8'h43: begin // CSR.WRITE
                 CSR_Write = 1;

@@ -37,14 +37,23 @@ AURORA-X ISA/
 │   └── Software_Toolchain.md   # Compiler, Assembler, Emulator, & Disassembler specs
 ├── aurora-x-hardware/     # Verilog RTL Implementation (SoC, Cores, PMU, Caches)
 ├── aurora-x-tools/        # Rust Software Toolchain (Compiler, Assembler, Emulator, Disassembler)
-│   ├── ax-cc/             # C Compiler (C -> Assembly)
+│   ├── ax-cc/             # C Compiler (C/Rust -> Assembly)
 │   ├── ax-asm/            # Assembler (Assembly -> Bin/Hex)
 │   ├── ax-emu/            # Cycle-Accurate Simulator/Emulator
 │   └── ax-disasm/         # Disassembler (Bin -> Assembly)
 ├── aurora-x-llvm/         # LLVM Compiler Backend TableGen specifications
 ├── AURORA-X-Tests/        # Verification assembly, hex, and C test scripts
-└── AURORA-X-Demos/        # Complex demos (AI Polynomial, Vector Math, Exception)
+└── AURORA-X-Demos/        # Complex demos (AI Polynomial, Vector Math, Exception, OS Kernel)
 ```
+
+---
+
+## 🛠️ Project Achievements & Recent Updates
+
+We have thoroughly verified and solidified the hardware RTL, assembler, emulator, and C compiler:
+- **Verilog Hardware Core & Bus:** Removed all multi-driver issues in `aurora_x_core.v`, implemented distinct Thread 1 interrupt checks, prevented register forwarding hazards during pipeline flushes/stalls, and resolved collision hangs in `ax_bus_scalable.v` by qualifying transactions with the active slave's ready signal. Streamlined the writeback stage CSR read path.
+- **C Compiler (`ax-cc`):** Implemented an operator precedence expression parser. Added support for `else` branches, `for` loops, logical operators (`&&`, `||`), relational comparisons (`<=`, `>=`), unary negation (`-`, `!`), and Rust-like syntax (`let`, `fn`) aliases for seamless testing.
+- **Assembler & Emulator:** Fixed branch offset calculations to prevent 14-bit overflow truncation and sign-extension. Added memory bounds validation to all read/write paths. Designed a unified cycle-accurate exception-routing module (`enter_trap`) that correctly elevates privilege levels to PL3 on traps. Added support for raw `.word` directives and negative offsets `[R1-8]`.
 
 ---
 
@@ -71,19 +80,26 @@ cargo build --workspace
 Compile a C program into assembly, assemble it to binary, and execute it on the emulator:
 ```bash
 # Compile C to Assembly
-cargo run -p ax-cc -- ../AURORA-X-Tests/fib.c -o fib.s
+cargo run -p ax-cc -- ../AURORA-X-Tests/test_features.c -o test_features.s
 
 # Assemble to Binary
-cargo run -p ax-asm -- fib.s -o fib.bin
+cargo run -p ax-asm -- test_features.s -o test_features.bin
 
 # Run on Emulator
-cargo run -p ax-emu -- fib.bin
+cargo run -p ax-emu -- test_features.bin
 ```
 *Example Emulator Output:*
 ```text
 Starting execution...
-[AX-EMU] SYS_PRINT: 55
-Infinite loop detected at PC=0x88. Halting emulator.
+[AX-EMU] SYS_PRINT: 1
+[AX-EMU] SYS_PRINT: 2
+[AX-EMU] SYS_PRINT: 3
+[AX-EMU] SYS_PRINT: 4
+[AX-EMU] SYS_PRINT: 5
+[AX-EMU] SYS_PRINT: 6
+[AX-EMU] SYS_PRINT: 7
+[AX-EMU] SYS_PRINT: 10
+Infinite loop detected at PC=0x1D0. Halting emulator.
 ```
 
 ### 3. Run Hardware RTL Simulation
@@ -114,7 +130,7 @@ To verify the functional compliance of the compiler, assembler, and emulator aga
 cd AURORA-X-Tests
 Run-Tests.bat
 ```
-*Results:* **9 PASSED, 0 FAILED**.
+*Results:* **13 PASSED, 0 FAILED**.
 
 ---
 *Architected and developed with absolute precision.*

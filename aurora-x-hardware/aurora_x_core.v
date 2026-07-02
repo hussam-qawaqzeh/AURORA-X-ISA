@@ -154,7 +154,7 @@ module aurora_x_core #(
                                 (csr_mie[0][3]  & csr_mip[0][3]));
                                 
     // Take interrupt if MIE is 1 and an enabled interrupt is pending, and pipeline is not stalled
-    assign take_interrupt = csr_mstatus[0][3] & interrupt_pending;
+    assign take_interrupt = take_interrupt_T0 | take_interrupt_T1;
 
     initial begin
         virt_pc[0] = 64'h00000000;
@@ -182,7 +182,9 @@ module aurora_x_core #(
             test_status_reg <= 64'd0;
             csr_trap_cause[0] <= 64'd0;
             csr_trap_cause[1] <= 64'd0;
+            tlb_update_en_pulse <= 0;
         end else begin
+            tlb_update_en_pulse <= 0;
             if (EX_MEM_CSR_Write) begin
                 case (EX_MEM_csr_addr)
                     12'h700: test_status_reg <= EX_MEM_alu_result;
@@ -214,14 +216,22 @@ module aurora_x_core #(
                 csr_trap_cause[EX_MEM_thread_id] <= 64'd13; // Load/Store page fault
                 csr_mstatus[EX_MEM_thread_id][7] <= csr_mstatus[EX_MEM_thread_id][3];
                 csr_mstatus[EX_MEM_thread_id][3] <= 1'b0;
-            end else if (take_interrupt && !Stall_Pipeline) begin
-                csr_epc[IF_ID_thread_id] <= IF_ID_pc;
+            end else if (take_interrupt_T0 && !Stall_Pipeline) begin
+                csr_epc[0] <= (IF_ID_thread_id == 0) ? IF_ID_pc : virt_pc[0];
                 if (csr_mip[0][11] && csr_mie[0][11]) csr_trap_cause[0] <= 64'h800000000000000B;
                 else if (csr_mip[0][7] && csr_mie[0][7]) csr_trap_cause[0] <= 64'h8000000000000007;
                 else if (csr_mip[0][3] && csr_mie[0][3]) csr_trap_cause[0] <= 64'h8000000000000003;
                 
                 csr_mstatus[0][7] <= csr_mstatus[0][3];
                 csr_mstatus[0][3] <= 1'b0;
+            end else if (take_interrupt_T1 && !Stall_Pipeline) begin
+                csr_epc[1] <= (IF_ID_thread_id == 1) ? IF_ID_pc : virt_pc[1];
+                if (csr_mip[1][11] && csr_mie[1][11]) csr_trap_cause[1] <= 64'h800000000000000B;
+                else if (csr_mip[1][7] && csr_mie[1][7]) csr_trap_cause[1] <= 64'h8000000000000007;
+                else if (csr_mip[1][3] && csr_mie[1][3]) csr_trap_cause[1] <= 64'h8000000000000003;
+                
+                csr_mstatus[1][7] <= csr_mstatus[1][3];
+                csr_mstatus[1][3] <= 1'b0;
             end else if (ID_EX_Exret) begin
                 csr_mstatus[ID_EX_thread_id][3] <= csr_mstatus[ID_EX_thread_id][7];
                 csr_mstatus[ID_EX_thread_id][7] <= 1'b1;
@@ -358,13 +368,11 @@ module aurora_x_core #(
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            tlb_update_en_pulse <= 0;
             IF_ID_pc <= 0;
             IF_ID_inst <= 32'd0;
             IF_ID_predicted_taken <= 0;
             IF_ID_predicted_target <= 0;
         end else if (!Stall_Pipeline) begin
-            tlb_update_en_pulse <= 0;
             if (!Stall_IF_ID) begin
                 IF_ID_pc <= virt_pc[fetch_thread_id];
                 IF_ID_inst <= inst;
@@ -511,6 +519,9 @@ module aurora_x_core #(
             ID_EX_CSR_Write <= 0; ID_EX_CSR_Read <= 0; ID_EX_Ecall <= 0; ID_EX_Exret <= 0;
             ID_EX_VectorOp <= 0; ID_EX_VectorRegWrite <= 0; ID_EX_VectorMemRead <= 0; ID_EX_VectorMemWrite <= 0;
             ID_EX_thread_id <= 1'b0;
+            ID_EX_rd <= 5'd0;
+            ID_EX_rs1 <= 5'd0;
+            ID_EX_rs2 <= 5'd0;
         end else if (!Stall_Pipeline) begin
             if (Stall_IF_ID || (Flush && (ID_EX_thread_id == IF_ID_thread_id))) begin
                 ID_EX_RegWrite <= 0; ID_EX_MemRead <= 0; ID_EX_MemWrite <= 0; ID_EX_Branch <= 0; ID_EX_Jump <= 0;
@@ -521,6 +532,9 @@ module aurora_x_core #(
                 ID_EX_predicted_taken <= 0;
                 ID_EX_predicted_target <= 0;
                 ID_EX_thread_id <= 1'b0;
+                ID_EX_rd <= 5'd0;
+                ID_EX_rs1 <= 5'd0;
+                ID_EX_rs2 <= 5'd0;
             end else begin
                 ID_EX_pc <= IF_ID_pc;
                 ID_EX_thread_id <= IF_ID_thread_id;
@@ -691,6 +705,7 @@ module aurora_x_core #(
             EX_MEM_VectorRegWrite <= 0; EX_MEM_VectorMemRead <= 0; EX_MEM_VectorMemWrite <= 0;
             EX_MEM_VectorMaskWe <= 0; EX_MEM_VectorUseMask <= 0;
             EX_MEM_thread_id <= 1'b0;
+            EX_MEM_rd <= 5'd0;
         end else if (!Stall_Pipeline) begin
             EX_MEM_pc <= ID_EX_pc;
             EX_MEM_alu_result <= alu_result_E;
@@ -775,6 +790,7 @@ module aurora_x_core #(
             MEM_WB_VectorMemRead <= 0;
             MEM_WB_VectorMaskWe <= 0;
             MEM_WB_thread_id <= 1'b0;
+            MEM_WB_rd <= 5'd0;
         end else if (!Stall_Pipeline) begin
             MEM_WB_pc <= EX_MEM_pc;
             MEM_WB_alu_result <= EX_MEM_alu_result;
@@ -797,28 +813,10 @@ module aurora_x_core #(
     // ------------------------------------------------------------------------
     // STAGE 5: WRITE BACK (WB)
     // ------------------------------------------------------------------------
-    always @(*) begin
-        csr_read_data_W = 64'd0;
-        if (MEM_WB_CSR_Read) begin
-            case (MEM_WB_csr_addr)
-                12'h700: csr_read_data_W = test_status_reg;
-                12'h020: csr_read_data_W = csr_trap_handler[MEM_WB_thread_id];
-                12'h021: csr_read_data_W = csr_epc[MEM_WB_thread_id];
-                12'h008: csr_read_data_W = csr_trap_cause[MEM_WB_thread_id];
-                12'h300: csr_read_data_W = csr_mstatus[MEM_WB_thread_id];
-                12'h304: csr_read_data_W = csr_mie[MEM_WB_thread_id];
-                12'h344: csr_read_data_W = csr_mip[MEM_WB_thread_id];
-                12'hF14: csr_read_data_W = {60'd0, core_id}; // Hardware Thread ID
-                default: csr_read_data_W = 64'd0;
-            endcase
-        end
-    end
-
     assign write_data_W = MEM_WB_VectorMaskWe ? MEM_WB_Mask_Result :
                           (MEM_WB_MemtoReg == 2'b01) ? MEM_WB_read_data : 
                           (MEM_WB_MemtoReg == 2'b10) ? (MEM_WB_pc + 4) :
-                          (MEM_WB_MemtoReg == 2'b11) ? csr_read_data_W :
-                          MEM_WB_alu_result;
+                          MEM_WB_alu_result; // CSR.READ value is already in MEM_WB_alu_result
 
     assign vwrite_data_W = MEM_WB_VectorMemRead ? {1984'd0, MEM_WB_read_data} : MEM_WB_valu_result;
 
