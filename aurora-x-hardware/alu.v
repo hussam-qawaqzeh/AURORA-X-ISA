@@ -29,8 +29,8 @@ module alu (
             ALU_XOR:  Result = A ^ B;
             ALU_SHL:  Result = A << B[5:0];
             ALU_SHR:  Result = A >> B[5:0];
-            ALU_MUL:  Result = A * B;
-            ALU_DIV:  Result = (B != 0) ? (A / B) : 64'd0; // Simple division, avoid div-by-zero
+            ALU_MUL:  Result = 64'd0;
+            ALU_DIV:  Result = 64'd0;
             ALU_SRA:  Result = $signed(A) >>> B[5:0];
             ALU_SLT:  Result = ($signed(A) < $signed(B)) ? 64'd1 : 64'd0;
             ALU_SLTU: Result = (A < B) ? 64'd1 : 64'd0;

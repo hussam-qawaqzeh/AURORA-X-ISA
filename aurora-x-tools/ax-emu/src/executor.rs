@@ -40,6 +40,14 @@ fn enter_trap(cpu: &mut Cpu, cause: u64) {
     if handler != 0 {
         cpu.write_csr(0x018, cpu.pc);
         cpu.write_csr(0x008, cause);
+        
+        let mut mstatus = cpu.read_csr(0x300);
+        let mie = (mstatus >> 3) & 1;
+        mstatus = (mstatus & !(1 << 7)) | (mie << 7); // MPIE = MIE
+        mstatus &= !(1 << 3); // MIE = 0
+        mstatus = (mstatus & !(0x3 << 11)) | (((cpu._pl & 0x3) as u64) << 11); // MPP = current PL
+        cpu.write_csr(0x300, mstatus);
+        
         cpu._pl = 3; // Elevate privilege to PL3
         cpu.pc = handler.wrapping_sub(4);
     } else {
@@ -265,8 +273,15 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
             if cpu._pl < 3 {
                 enter_trap(cpu, 0x04);
             } else {
+                let mut mstatus = cpu.read_csr(0x300);
+                cpu._pl = ((mstatus >> 11) & 0x3) as u8; // Restore PL from MPP
+                mstatus &= !(0x3 << 11); // Clear MPP
+                let mpie = (mstatus >> 7) & 1;
+                mstatus = (mstatus & !(1 << 3)) | (mpie << 3); // MIE = MPIE
+                mstatus |= 1 << 7; // Set MPIE to 1
+                cpu.write_csr(0x300, mstatus);
+
                 let epc = cpu.read_csr(0x018);
-                cpu._pl = 0; // Drop Privilege
                 cpu.pc = epc.wrapping_sub(4);
             }
         }
@@ -299,50 +314,73 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
         }
         0x60 => {
             // VLOAD
-            let vl = cpu.read_csr(0x508).min(256); // AX_VEC_CONTROL
+            let vl = cpu.read_csr(0x508).min(256) as usize; // AX_VEC_CONTROL
             let base = cpu.read_reg(dec.rs1);
             let vaddr = base.wrapping_add(dec.imm14 as i64 as u64);
             if vaddr % 8 != 0 {
                 enter_trap(cpu, 0x02);
             } else {
-                match translate(cpu, mem, vaddr, false) {
-                    Ok(paddr) => {
-                        let p = paddr as usize;
-                        let end = p + (vl as usize);
-                        if end <= mem.ram.len() {
-                            cpu.vr[dec.rd][0..vl as usize].copy_from_slice(&mem.ram[p..end]);
-                        } else {
-                            enter_trap(cpu, 0x01); // Memory Access Fault
+                let mut temp_bytes = vec![0u8; vl];
+                let mut fault = None;
+                for i in 0..vl {
+                    let elem_vaddr = vaddr + i as u64;
+                    match translate(cpu, mem, elem_vaddr, false) {
+                        Ok(elem_paddr) => {
+                            if (elem_paddr as usize) < mem.ram.len() {
+                                temp_bytes[i] = mem.ram[elem_paddr as usize];
+                            } else {
+                                fault = Some(0x01); // Memory Access Fault
+                                break;
+                            }
+                        }
+                        Err(cause) => {
+                            fault = Some(cause as u64);
+                            break;
                         }
                     }
-                    Err(cause) => {
-                        enter_trap(cpu, cause as u64);
+                }
+                match fault {
+                    Some(cause) => enter_trap(cpu, cause),
+                    None => {
+                        cpu.vr[dec.rd][0..vl].copy_from_slice(&temp_bytes);
                     }
                 }
             }
         }
         0x61 => {
             // VSTORE (S-Type encoding! rs1 is at [23:19] which is dec.rd, vs2 is at [18:14] which is dec.rs1)
-            let vl = cpu.read_csr(0x508).min(256); // AX_VEC_CONTROL
+            let vl = cpu.read_csr(0x508).min(256) as usize; // AX_VEC_CONTROL
             let base = cpu.read_reg(dec.rd);
             let vaddr = base.wrapping_add(dec.imm14 as i64 as u64);
             if vaddr % 8 != 0 {
                 enter_trap(cpu, 0x02);
             } else {
-                match translate(cpu, mem, vaddr, true) {
-                    Ok(paddr) => {
-                        let vs2_idx = dec.rs1;
-                        let p = paddr as usize;
-                        if p + (vl as usize) <= mem.ram.len() {
-                            for i in 0..(vl as usize) {
-                                mem.ram[p + i] = cpu.vr[vs2_idx][i];
+                let vs2_idx = dec.rs1;
+                let mut paddr_list = Vec::new();
+                let mut fault = None;
+                for i in 0..vl {
+                    let elem_vaddr = vaddr + i as u64;
+                    match translate(cpu, mem, elem_vaddr, true) {
+                        Ok(elem_paddr) => {
+                            if (elem_paddr as usize) < mem.ram.len() {
+                                paddr_list.push(elem_paddr as usize);
+                            } else {
+                                fault = Some(0x01);
+                                break;
                             }
-                        } else {
-                            enter_trap(cpu, 0x01); // Memory Access Fault
+                        }
+                        Err(cause) => {
+                            fault = Some(cause as u64);
+                            break;
                         }
                     }
-                    Err(cause) => {
-                        enter_trap(cpu, cause as u64);
+                }
+                match fault {
+                    Some(cause) => enter_trap(cpu, cause),
+                    None => {
+                        for i in 0..vl {
+                            mem.ram[paddr_list[i]] = cpu.vr[vs2_idx][i];
+                        }
                     }
                 }
             }

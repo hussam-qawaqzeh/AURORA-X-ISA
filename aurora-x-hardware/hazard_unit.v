@@ -5,6 +5,7 @@ module hazard_unit (
     input MemRead_E,
     input Branch_Taken,
     input cache_stall,
+    input muldiv_stall,
     input thread_id_D,
     input thread_id_E,
     
@@ -17,8 +18,8 @@ module hazard_unit (
         Stall_Pipeline = 0;
         Flush = 0;
         
-        // Cache Stall (Global Freeze)
-        if (cache_stall) begin
+        // Cache Stall or Mul/Div Stall (Global Freeze)
+        if (cache_stall || muldiv_stall) begin
             Stall_Pipeline = 1;
         end else begin
             // Load-Use Hazard Detection

@@ -19,6 +19,8 @@ enum Inst {
     Jump(String),
     CsrWrite(u8, u16),
     Label(String),
+    Load(u8, u8, i32),
+    Store(u8, u8, i32),
 }
 
 pub struct CodeGen {
@@ -26,15 +28,19 @@ pub struct CodeGen {
     next_reg: u8,
     label_count: usize,
     current_func: String,
+    func_call_sites: HashMap<String, Vec<String>>,
+    func_call_counts: HashMap<String, usize>,
 }
 
 impl CodeGen {
     pub fn new() -> Self {
         Self {
             var_to_reg: HashMap::new(),
-            next_reg: 1, // R1 to R24 for locals
+            next_reg: 1, // R1 to R23 for locals (R24 is SP)
             label_count: 0,
             current_func: String::new(),
+            func_call_sites: HashMap::new(),
+            func_call_counts: HashMap::new(),
         }
     }
 
@@ -49,7 +55,7 @@ impl CodeGen {
         } else {
             let r = self.next_reg;
             self.next_reg += 1;
-            if self.next_reg > 24 { panic!("Out of registers!"); }
+            if self.next_reg > 23 { panic!("Out of registers! R24 is reserved for Stack Pointer."); }
             self.var_to_reg.insert(name.to_string(), r);
             r
         }
@@ -58,17 +64,94 @@ impl CodeGen {
     pub fn generate(&mut self, ast: &ASTNode) -> String {
         let mut asm = Vec::new();
         if let ASTNode::Program(funcs) = ast {
+            // Pass 0: Collect function call sites
+            self.collect_call_sites(ast);
+
+            // First emit main at PC 0 (entry point)
+            if let Some(main_func) = funcs.iter().find(|f| f.name == "main") {
+                // Initialize SP = 1048576 (R24)
+                self.emit_load_u32(&mut asm, 24, 1048576, 0);
+                self.gen_func(main_func, &mut asm);
+            }
+            // Then emit other functions
             for func in funcs {
-                self.gen_func(func, &mut asm);
+                if func.name != "main" {
+                    self.gen_func(func, &mut asm);
+                }
             }
         }
         self.resolve_labels(asm)
+    }
+
+    fn collect_call_sites(&mut self, ast: &ASTNode) {
+        if let ASTNode::Program(funcs) = ast {
+            for func in funcs {
+                for stmt in &func.body {
+                    self.collect_call_sites_stmt(stmt);
+                }
+            }
+        }
+    }
+
+    fn collect_call_sites_stmt(&mut self, stmt: &Statement) {
+        match stmt {
+            Statement::Declare(_, expr) => self.collect_call_sites_expr(expr),
+            Statement::Assign(_, expr) => self.collect_call_sites_expr(expr),
+            Statement::If(cond, body, else_body) => {
+                self.collect_call_sites_expr(cond);
+                for s in body { self.collect_call_sites_stmt(s); }
+                if let Some(eb) = else_body {
+                    for s in eb { self.collect_call_sites_stmt(s); }
+                }
+            }
+            Statement::While(cond, body) => {
+                self.collect_call_sites_expr(cond);
+                for s in body { self.collect_call_sites_stmt(s); }
+            }
+            Statement::For(init, cond, step, body) => {
+                self.collect_call_sites_stmt(init);
+                self.collect_call_sites_expr(cond);
+                self.collect_call_sites_stmt(step);
+                for s in body { self.collect_call_sites_stmt(s); }
+            }
+            Statement::Return(expr) => self.collect_call_sites_expr(expr),
+            Statement::CallStmt(name, args) => {
+                if name != "print" {
+                    let lbl = self.new_label(&format!("ret_{}", name));
+                    self.func_call_sites.entry(name.clone()).or_default().push(lbl);
+                }
+                for arg in args { self.collect_call_sites_expr(arg); }
+            }
+        }
+    }
+
+    fn collect_call_sites_expr(&mut self, expr: &Expression) {
+        match expr {
+            Expression::BinaryOp(_, lhs, rhs) => {
+                self.collect_call_sites_expr(lhs);
+                self.collect_call_sites_expr(rhs);
+            }
+            Expression::UnaryOp(_, inner) => {
+                self.collect_call_sites_expr(inner);
+            }
+            Expression::CallExpr(name, args) => {
+                if name != "print" {
+                    let lbl = self.new_label(&format!("ret_{}", name));
+                    self.func_call_sites.entry(name.clone()).or_default().push(lbl);
+                }
+                for arg in args { self.collect_call_sites_expr(arg); }
+            }
+            _ => {}
+        }
     }
 
     fn gen_func(&mut self, func: &Function, asm: &mut Vec<Inst>) {
         self.var_to_reg.clear();
         self.next_reg = 1;
         self.current_func = func.name.clone();
+        
+        // Emit entry label
+        asm.push(Inst::Label(func.name.clone()));
         
         // Setup args
         for arg in &func.args {
@@ -83,7 +166,81 @@ impl CodeGen {
             let end_label = self.new_label("end_func");
             asm.push(Inst::Label(end_label.clone()));
             asm.push(Inst::Jump(end_label)); // infinite loop at end of main
+        } else {
+            let disp_label = format!("disp_{}", func.name);
+            asm.push(Inst::Label(disp_label));
+            self.emit_dispatch(&func.name, asm);
         }
+    }
+
+    fn emit_dispatch(&mut self, func_name: &str, asm: &mut Vec<Inst>) {
+        if let Some(sites) = self.func_call_sites.get(func_name) {
+            let sites = sites.clone();
+            for (idx, label) in sites.iter().enumerate() {
+                let call_id = idx + 1;
+                let r_temp = 25; // R25-R30 scratch
+                asm.push(Inst::Addi(r_temp, 0, call_id as i32));
+                asm.push(Inst::Branch(30, r_temp, label.clone()));
+            }
+        }
+        // Fallback / infinite loop safety
+        asm.push(Inst::Jump(format!("disp_{}", func_name)));
+    }
+
+    fn gen_call(&mut self, name: &str, args: &[Expression], asm: &mut Vec<Inst>, temp_idx: u8) -> u8 {
+        // 1. Evaluate args into temp registers
+        let mut arg_regs = Vec::new();
+        let mut current_temp = temp_idx;
+        for arg in args {
+            let r = self.gen_expr(arg, asm, current_temp);
+            arg_regs.push(r);
+            current_temp += 1;
+        }
+
+        // 2. Spill active local registers onto stack (R1 to next_reg-1)
+        let mut saved_regs = Vec::new();
+        for r in 1..self.next_reg {
+            saved_regs.push(r);
+        }
+        // Spill Link register R30
+        saved_regs.push(30);
+
+        for &r in &saved_regs {
+            asm.push(Inst::Addi(24, 24, -8)); // push SP
+            asm.push(Inst::Store(r, 24, 0));
+        }
+
+        // 3. Move arguments to R1, R2, ...
+        for (i, &arg_r) in arg_regs.iter().enumerate() {
+            let target_r = (i + 1) as u8;
+            asm.push(Inst::Addi(target_r, arg_r, 0));
+        }
+
+        // 4. Set R30 to return site ID
+        let call_idx = *self.func_call_counts.entry(name.to_string()).or_default();
+        self.func_call_counts.insert(name.to_string(), call_idx + 1);
+        
+        let return_label = self.func_call_sites.get(name).unwrap()[call_idx].clone();
+        let return_id = (call_idx + 1) as i32;
+        asm.push(Inst::Addi(30, 0, return_id));
+
+        // 5. Jump to function entry
+        asm.push(Inst::Jump(name.to_string()));
+
+        // 6. Emit return label
+        asm.push(Inst::Label(return_label));
+
+        // Return value is in R1. Move to a temp first before POP clobbers it
+        let res_reg = 25 + temp_idx;
+        if res_reg > 30 { panic!("Out of temp registers!"); }
+        asm.push(Inst::Addi(res_reg, 1, 0));
+
+        // 7. Pop saved registers from stack (reverse order)
+        for &r in saved_regs.iter().rev() {
+            asm.push(Inst::Load(r, 24, 0));
+            asm.push(Inst::Addi(24, 24, 8)); // pop SP
+        }
+        res_reg
     }
 
     fn gen_stmt(&mut self, stmt: &Statement, asm: &mut Vec<Inst>) {
@@ -167,8 +324,11 @@ impl CodeGen {
                 if self.current_func == "main" {
                     asm.push(Inst::CsrWrite(res_r, 0x700));
                 } else {
-                    asm.push(Inst::Addi(1, res_r, 0)); // Return result in R1
-                    // Since dynamic jump is not in hardware, compile return as a simple exit or no-op
+                    if res_r != 1 {
+                        asm.push(Inst::Addi(1, res_r, 0));
+                    }
+                    let disp_label = format!("disp_{}", self.current_func);
+                    asm.push(Inst::Jump(disp_label));
                 }
             }
             Statement::CallStmt(name, args) => {
@@ -176,7 +336,7 @@ impl CodeGen {
                     let r = self.gen_expr(&args[0], asm, 0);
                     asm.push(Inst::CsrWrite(r, 0x701));
                 } else {
-                    panic!("Unsupported function call: {}", name);
+                    self.gen_call(name, args, asm, 0);
                 }
             }
         }
@@ -333,7 +493,7 @@ impl CodeGen {
                     asm.push(Inst::CsrWrite(r, 0x701));
                     r
                 } else {
-                    panic!("Function calls in expressions not implemented");
+                    self.gen_call(name, args, asm, temp_idx)
                 }
             }
         }
@@ -423,6 +583,14 @@ impl CodeGen {
                 }
                 Inst::CsrWrite(rs1, addr) => {
                     resolved.push_str(&format!("    CSR.WRITE R{}, 0x{:03X}\n", rs1, addr));
+                    pc += 1;
+                }
+                Inst::Load(rd, rs1, imm) => {
+                    resolved.push_str(&format!("    LOAD.X R{}, [R{}+{}]\n", rd, rs1, imm));
+                    pc += 1;
+                }
+                Inst::Store(rs2, rs1, imm) => {
+                    resolved.push_str(&format!("    STORE.X R{}, [R{}+{}]\n", rs2, rs1, imm));
                     pc += 1;
                 }
             }

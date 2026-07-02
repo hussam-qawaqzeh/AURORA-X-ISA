@@ -109,6 +109,7 @@ module aurora_x_core #(
     reg [63:0] csr_epc [0:1];
     reg [63:0] csr_trap_cause [0:1];
     reg [63:0] csr_trap_handler [0:1];
+    reg [1:0] priv_mode [0:1]; // Privilege Mode: 2'b00 = User, 2'b01 = Supervisor, 2'b11 = Machine
     reg [63:0] test_status_reg;
     reg [63:0] csr_read_data_W;
     
@@ -168,6 +169,8 @@ module aurora_x_core #(
         csr_trap_handler[0] = 64'd0; csr_trap_handler[1] = 64'd0;
         csr_satp = 64'd0;
         csr_tlb_update_flags = 4'd0;
+        priv_mode[0] = 2'b11;
+        priv_mode[1] = 2'b11;
     end
 
     always @(posedge clk or negedge rst_n) begin
@@ -179,6 +182,8 @@ module aurora_x_core #(
             csr_trap_handler[0] <= 64'd0; csr_trap_handler[1] <= 64'd0;
             csr_satp <= 64'd0;
             csr_tlb_update_flags <= 4'd0;
+            priv_mode[0] <= 2'b11;
+            priv_mode[1] <= 2'b11;
             test_status_reg <= 64'd0;
             csr_trap_cause[0] <= 64'd0;
             csr_trap_cause[1] <= 64'd0;
@@ -206,16 +211,22 @@ module aurora_x_core #(
                 csr_trap_cause[ID_EX_thread_id] <= 64'd8; // Env call from User mode
                 csr_mstatus[ID_EX_thread_id][7] <= csr_mstatus[ID_EX_thread_id][3]; // MPIE = MIE
                 csr_mstatus[ID_EX_thread_id][3] <= 1'b0;           // MIE = 0
+                csr_mstatus[ID_EX_thread_id][12:11] <= priv_mode[ID_EX_thread_id]; // MPP = current mode
+                priv_mode[ID_EX_thread_id] <= 2'b11; // Elevate to Machine Mode
             end else if ((i_tlb_miss || i_page_fault) && !Stall_Pipeline) begin
                 csr_epc[fetch_thread_id] <= virt_pc[fetch_thread_id];
                 csr_trap_cause[fetch_thread_id] <= 64'd12; // Instruction page fault
                 csr_mstatus[fetch_thread_id][7] <= csr_mstatus[fetch_thread_id][3];
                 csr_mstatus[fetch_thread_id][3] <= 1'b0;
+                csr_mstatus[fetch_thread_id][12:11] <= priv_mode[fetch_thread_id];
+                priv_mode[fetch_thread_id] <= 2'b11;
             end else if ((d_tlb_miss || d_page_fault) && !Stall_Pipeline) begin
                 csr_epc[EX_MEM_thread_id] <= EX_MEM_alu_result;
                 csr_trap_cause[EX_MEM_thread_id] <= 64'd13; // Load/Store page fault
                 csr_mstatus[EX_MEM_thread_id][7] <= csr_mstatus[EX_MEM_thread_id][3];
                 csr_mstatus[EX_MEM_thread_id][3] <= 1'b0;
+                csr_mstatus[EX_MEM_thread_id][12:11] <= priv_mode[EX_MEM_thread_id];
+                priv_mode[EX_MEM_thread_id] <= 2'b11;
             end else if (take_interrupt_T0 && !Stall_Pipeline) begin
                 csr_epc[0] <= (IF_ID_thread_id == 0) ? IF_ID_pc : virt_pc[0];
                 if (csr_mip[0][11] && csr_mie[0][11]) csr_trap_cause[0] <= 64'h800000000000000B;
@@ -224,6 +235,8 @@ module aurora_x_core #(
                 
                 csr_mstatus[0][7] <= csr_mstatus[0][3];
                 csr_mstatus[0][3] <= 1'b0;
+                csr_mstatus[0][12:11] <= priv_mode[0];
+                priv_mode[0] <= 2'b11;
             end else if (take_interrupt_T1 && !Stall_Pipeline) begin
                 csr_epc[1] <= (IF_ID_thread_id == 1) ? IF_ID_pc : virt_pc[1];
                 if (csr_mip[1][11] && csr_mie[1][11]) csr_trap_cause[1] <= 64'h800000000000000B;
@@ -232,9 +245,13 @@ module aurora_x_core #(
                 
                 csr_mstatus[1][7] <= csr_mstatus[1][3];
                 csr_mstatus[1][3] <= 1'b0;
+                csr_mstatus[1][12:11] <= priv_mode[1];
+                priv_mode[1] <= 2'b11;
             end else if (ID_EX_Exret) begin
                 csr_mstatus[ID_EX_thread_id][3] <= csr_mstatus[ID_EX_thread_id][7];
                 csr_mstatus[ID_EX_thread_id][7] <= 1'b1;
+                priv_mode[ID_EX_thread_id] <= csr_mstatus[ID_EX_thread_id][12:11]; // Restore mode from MPP
+                csr_mstatus[ID_EX_thread_id][12:11] <= 2'b00; // Clear MPP
             end
         end
     end
@@ -492,6 +509,7 @@ module aurora_x_core #(
     wire [63:0] imm19_sext_D = {{45{imm19[18]}}, imm19};
 
     wire Branch_Taken_EX;
+    wire muldiv_stall;
     hazard_unit u_hazard (
         .rs1_D(rs1_D),
         .rs2_D(rs2_D),
@@ -499,6 +517,7 @@ module aurora_x_core #(
         .MemRead_E(ID_EX_MemRead),
         .Branch_Taken(Branch_Taken_EX),
         .cache_stall(cache_stall),
+        .muldiv_stall(muldiv_stall),
         .thread_id_D(IF_ID_thread_id),
         .thread_id_E(ID_EX_thread_id),
         .Stall_IF_ID(Stall_IF_ID),
@@ -606,6 +625,78 @@ module aurora_x_core #(
         .Zero(alu_zero_E)
     );
 
+    // Pipelined Multiplier and Multi-cycle Divider Instantiations
+    wire mul_ready, div_ready;
+    wire [63:0] mul_res, div_res;
+    reg mul_start, div_start;
+    reg mul_active, div_active;
+    reg [1:0] muldiv_state;
+
+    wire is_mul_inst = (ID_EX_ALU_Op == 4'b0111) && !ID_EX_FpuOp && !ID_EX_CSR_Read && !ID_EX_CSR_Write;
+    wire is_div_inst = (ID_EX_ALU_Op == 4'b1000) && !ID_EX_FpuOp && !ID_EX_CSR_Read && !ID_EX_CSR_Write;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            mul_start <= 0;
+            div_start <= 0;
+            mul_active <= 0;
+            div_active <= 0;
+            muldiv_state <= 2'b00;
+        end else begin
+            case (muldiv_state)
+                2'b00: begin // IDLE
+                    if (is_mul_inst && !mul_active) begin
+                        mul_start <= 1;
+                        mul_active <= 1;
+                        muldiv_state <= 2'b01;
+                    end else if (is_div_inst && !div_active) begin
+                        div_start <= 1;
+                        div_active <= 1;
+                        muldiv_state <= 2'b10;
+                    end
+                end
+                2'b01: begin // ACTIVE_MUL
+                    mul_start <= 0;
+                    if (mul_ready) begin
+                        mul_active <= 0;
+                        muldiv_state <= 2'b00;
+                    end
+                end
+                2'b10: begin // ACTIVE_DIV
+                    div_start <= 0;
+                    if (div_ready) begin
+                        div_active <= 0;
+                        muldiv_state <= 2'b00;
+                    end
+                end
+                default: muldiv_state <= 2'b00;
+            endcase
+        end
+    end
+
+    assign muldiv_stall = (is_mul_inst && (muldiv_state != 2'b01 || !mul_ready)) ||
+                          (is_div_inst && (muldiv_state != 2'b10 || !div_ready));
+
+    ax_multiplier u_multiplier (
+        .clk(clk),
+        .rst_n(rst_n),
+        .start(mul_start),
+        .A(alu_in1),
+        .B(alu_in2),
+        .Result(mul_res),
+        .ready(mul_ready)
+    );
+
+    ax_divider u_divider (
+        .clk(clk),
+        .rst_n(rst_n),
+        .start(div_start),
+        .A(alu_in1),
+        .B(alu_in2),
+        .Quotient(div_res),
+        .ready(div_ready)
+    );
+
     reg [63:0] csr_read_data_E;
     always @(*) begin
         csr_read_data_E = 64'd0;
@@ -638,7 +729,10 @@ module aurora_x_core #(
     );
 
     assign alu_result_E = ID_EX_FpuOp ? fpu_result_E : 
-                          ID_EX_CSR_Read ? csr_read_data_E : actual_alu_result;
+                          ID_EX_CSR_Read ? csr_read_data_E : 
+                          (ID_EX_ALU_Op == 4'b0111) ? mul_res :
+                          (ID_EX_ALU_Op == 4'b1000) ? div_res :
+                          actual_alu_result;
 
     // Vector ALU
     wire [2047:0] valu_in2 = ID_EX_ALUSrc_B ? {1984'd0, ID_EX_imm14_sext} : ID_EX_vread_data2;
