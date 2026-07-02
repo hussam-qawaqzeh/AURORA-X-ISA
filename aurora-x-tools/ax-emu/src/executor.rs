@@ -28,7 +28,11 @@ pub fn translate(cpu: &mut Cpu, mem: &mut Memory, vaddr: u64, is_write: bool) ->
     }
     
     let ppn = pte >> 12;
-    Ok((ppn << 12) | offset)
+    let paddr = (ppn << 12) | offset;
+    if paddr >= mem.ram.len() as u64 {
+        return Err(0x01); // Memory Access Fault
+    }
+    Ok(paddr)
 }
 
 fn enter_trap(cpu: &mut Cpu, cause: u64) {
@@ -38,6 +42,9 @@ fn enter_trap(cpu: &mut Cpu, cause: u64) {
         cpu.write_csr(0x008, cause);
         cpu._pl = 3; // Elevate privilege to PL3
         cpu.pc = handler.wrapping_sub(4);
+    } else {
+        eprintln!("Unhandled Exception: Cause code {} at PC=0x{:X}. No trap handler registered (AX_EXCEPTION_VECTOR is 0). Halting simulation.", cause, cpu.pc);
+        std::process::exit(1);
     }
 }
 
@@ -55,8 +62,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
                 let val2 = cpu.read_reg(dec.rs2);
                 cpu.write_reg(dec.rd, val1.wrapping_sub(val2));
             } else {
-                eprintln!("Unknown funct9 {:02X} for opcode 0x01", dec.funct9);
-                std::process::exit(1);
+                enter_trap(cpu, 0x00);
             }
         }
         0x02 => {
@@ -215,7 +221,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
         }
         0x42 => {
             // CSR.READ
-            let required_pl = if dec.csr_addr < 0x200 {
+            let required_pl = if dec.csr_addr < 0x200 || dec.csr_addr == 0x300 {
                 3 // Machine mode required
             } else if dec.csr_addr < 0x300 {
                 1 // Supervisor mode required
@@ -231,7 +237,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
         }
         0x43 => {
             // CSR.WRITE
-            let required_pl = if dec.csr_addr < 0x200 {
+            let required_pl = if dec.csr_addr < 0x200 || dec.csr_addr == 0x300 {
                 3
             } else if dec.csr_addr < 0x300 {
                 1
@@ -278,7 +284,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
         }
         0x54 => {
             // VCMP.GT (Vector Compare Greater Than)
-            let vl = cpu.read_csr(0x508);
+            let vl = cpu.read_csr(0x508).min(256);
             let elements = (vl / 4) as usize;
             let mut mask = 0u64;
             for i in 0..elements {
@@ -293,7 +299,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
         }
         0x60 => {
             // VLOAD
-            let vl = cpu.read_csr(0x508); // AX_VEC_CONTROL
+            let vl = cpu.read_csr(0x508).min(256); // AX_VEC_CONTROL
             let base = cpu.read_reg(dec.rs1);
             let vaddr = base.wrapping_add(dec.imm14 as i64 as u64);
             if vaddr % 8 != 0 {
@@ -306,7 +312,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
                         if end <= mem.ram.len() {
                             cpu.vr[dec.rd][0..vl as usize].copy_from_slice(&mem.ram[p..end]);
                         } else {
-                            panic!("VLOAD out of bounds: paddr {} + vl {} > mem size {}", p, vl, mem.ram.len());
+                            enter_trap(cpu, 0x01); // Memory Access Fault
                         }
                     }
                     Err(cause) => {
@@ -317,7 +323,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
         }
         0x61 => {
             // VSTORE (S-Type encoding! rs1 is at [23:19] which is dec.rd, vs2 is at [18:14] which is dec.rs1)
-            let vl = cpu.read_csr(0x508); // AX_VEC_CONTROL
+            let vl = cpu.read_csr(0x508).min(256); // AX_VEC_CONTROL
             let base = cpu.read_reg(dec.rd);
             let vaddr = base.wrapping_add(dec.imm14 as i64 as u64);
             if vaddr % 8 != 0 {
@@ -332,7 +338,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
                                 mem.ram[p + i] = cpu.vr[vs2_idx][i];
                             }
                         } else {
-                            panic!("VSTORE out of bounds: paddr {} + vl {} > mem size {}", p, vl, mem.ram.len());
+                            enter_trap(cpu, 0x01); // Memory Access Fault
                         }
                     }
                     Err(cause) => {
@@ -343,7 +349,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
         }
         0x62 => {
             // VADD (32-bit elements)
-            let vl = cpu.read_csr(0x508);
+            let vl = cpu.read_csr(0x508).min(256);
             let elements = (vl / 4) as usize; // 32-bit = 4 bytes
             let use_mask = (dec.funct9 & 0x100) != 0;
             for i in 0..elements {
@@ -358,7 +364,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
         }
         0x63 => {
             // VMUL (32-bit elements)
-            let vl = cpu.read_csr(0x508);
+            let vl = cpu.read_csr(0x508).min(256);
             let elements = (vl / 4) as usize;
             let use_mask = (dec.funct9 & 0x100) != 0;
             for i in 0..elements {
@@ -373,7 +379,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
         }
         0x64 => {
             // VFMA (32-bit elements: vd = vd + (vs1 * vs2))
-            let vl = cpu.read_csr(0x508);
+            let vl = cpu.read_csr(0x508).min(256);
             let elements = (vl / 4) as usize;
             let use_mask = (dec.funct9 & 0x100) != 0;
             for i in 0..elements {
@@ -389,7 +395,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, dec: &DecodedInstruction) {
         }
         0x65 => {
             // VPERM (32-bit elements: vd[i] = vs1[vs2[i]])
-            let vl = cpu.read_csr(0x508);
+            let vl = cpu.read_csr(0x508).min(256);
             let elements = (vl / 4) as usize;
             let use_mask = (dec.funct9 & 0x100) != 0;
             let mut temp_out = vec![0u8; vl as usize];

@@ -19,7 +19,7 @@ impl Memory {
     }
 
     pub fn read_u32(&self, addr: usize) -> u32 {
-        if addr + 3 >= self.ram.len() {
+        if addr + 4 > self.ram.len() {
             return 0;
         }
         let b0 = self.ram[addr] as u32;
@@ -31,7 +31,7 @@ impl Memory {
     }
 
     pub fn read_u64(&self, addr: usize) -> u64 {
-        if addr + 7 >= self.ram.len() {
+        if addr + 8 > self.ram.len() {
             return 0;
         }
         let mut val = 0;
@@ -42,7 +42,7 @@ impl Memory {
     }
 
     pub fn write_u64(&mut self, addr: usize, val: u64) {
-        if addr + 7 >= self.ram.len() {
+        if addr + 8 > self.ram.len() {
             return;
         }
         for i in 0..8 {

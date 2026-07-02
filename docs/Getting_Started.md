@@ -36,7 +36,7 @@ The AURORA-X software toolchain is written in Rust and is located under `aurora-
 
 ### Toolchain Flow Diagram
 
-![AURORA-X Toolchain Flowchart](file:///C:/Users/hussam/.gemini/antigravity/brain/7fc005ba-1a72-4b47-b954-63948c5305d7/toolchain_flow_1782388137010.png)
+![AURORA-X Toolchain Flowchart](images/toolchain_flow_1782388137010.png)
 
 ### Step-by-Step Compilation and Execution
 
@@ -154,14 +154,16 @@ To run all automated compliance tests:
  AURORA-X Automated Compliance Suite
 ========================================
 
-[RUNNING] demo.s...
-  [PASS]  demo.s
-[RUNNING] fib.s...
-  [PASS]  fib.s
 [RUNNING] test_alu.s...
   [PASS]  test_alu.s
 [RUNNING] test_branch.s...
   [PASS]  test_branch.s
+[RUNNING] test_branch_full.s...
+  [PASS]  test_branch_full.s
+[RUNNING] test_exceptions.s...
+  [PASS]  test_exceptions.s
+[RUNNING] test_fpu.s...
+  [PASS]  test_fpu.s
 [RUNNING] test_memory.s...
   [PASS]  test_memory.s
 [SKIPPED] test_mesi.s [Multicore Snoop Test - requires Hardware simulation]
@@ -171,12 +173,48 @@ To run all automated compliance tests:
   [PASS]  test_multicore.s
 [RUNNING] test_pmu.s...
   [PASS]  test_pmu.s
+[RUNNING] test_r0.s...
+  [PASS]  test_r0.s
+[RUNNING] test_slt_sra.s...
+  [PASS]  test_slt_sra.s
+[RUNNING] test_vcmp_mask.s...
+  [PASS]  test_vcmp_mask.s
 [RUNNING] test_vector.s...
   [PASS]  test_vector.s
 
+=======================================
+ RESULTS: 13 PASSED, 0 FAILED
+=======================================
+```
+
+### Running C Compiler End-to-End Tests
+
+To verify the full software toolchain pipeline (compiling C source to assembly, assembling to binary, and executing on the emulator), run the End-to-End test suite:
+1. Navigate to `AURORA-X-Tests/`.
+2. Run the automated E2E test script:
+   ```bash
+   cd AURORA-X-Tests
+   Run-E2E-Tests.bat
+   ```
+*Output:*
+```text
 ========================================
- RESULTS: 9 PASSED, 0 FAILED
+ AURORA-X C Compiler End-to-End Suite
 ========================================
+
+[RUNNING] demo.c...
+  [PASS]  demo.c
+[RUNNING] fib.c...
+  [PASS]  fib.c
+[RUNNING] test_features.c...
+  [PASS]  test_features.c
+[RUNNING] test_large_const.c...
+  [PASS]  test_large_const.c
+
+========================================
+ RESULTS: 4 PASSED, 0 FAILED
+========================================
+```
 ```
 
 ---

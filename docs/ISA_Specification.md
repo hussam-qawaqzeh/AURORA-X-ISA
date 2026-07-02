@@ -67,19 +67,19 @@ The 8-bit `opcode` space `[31:24]` determines the operation class:
 
 | Opcode | Mnemonic | Type | Description |
 |---|---|---|---|
-| **0x01** | `ADD.X` | R | 64-bit Integer Addition |
-| **0x02** | `SUB.X` | R | 64-bit Integer Subtraction |
-| **0x03** | `AND` | R | Bitwise AND |
-| **0x04** | `OR` | R | Bitwise OR |
-| **0x05** | `XOR` | R | Bitwise XOR |
-| **0x06** | `SHL` / `SHR` / `SRA` | R | Shifts (logical left, logical right, arithmetic right) |
+| **0x01** | `ADD.X` / `SUB.X` | R | 64-bit Integer Add (funct9=0) / Subtract (funct9=1) |
+| **0x02** | `AND` | R | Bitwise AND |
+| **0x03** | `OR` | R | Bitwise OR |
+| **0x04** | `XOR` | R | Bitwise XOR |
+| **0x05** | `SHL` | R | Shift Left Logical |
+| **0x06** | `SHR` / `SRA` | R | Shift Right Logical (funct9=2) / Arithmetic (funct9=1) |
 | **0x07** | `MUL` | R | Integer Multiplication |
 | **0x08** | `DIV` | R | Integer Division |
 | **0x09** | `ADDI` | I | 64-bit Add Immediate |
 | **0x0A** | `SLT` | R | Set Less Than (signed) |
 | **0x0B** | `SLTU` | R | Set Less Than Unsigned |
-| **0x20** | `LOAD.X` | I | 64-bit Memory Load |
-| **0x21** | `STORE.X` | S | 64-bit Memory Store |
+| **0x21** | `LOAD.X` | I | 64-bit Memory Load |
+| **0x22** | `STORE.X` | S | 64-bit Memory Store |
 | **0x40** | `BEQ` / `BRANCH.X` | B | Branch if Equal |
 | **0x46** | `BNE` | B | Branch if Not Equal |
 | **0x47** | `BLT` | B | Branch if Less Than (signed) |
@@ -95,10 +95,10 @@ The 8-bit `opcode` space `[31:24]` determines the operation class:
 | **0x51** | `FMUL.X` | R | Floating-point Multiply |
 | **0x60** | `VLOAD` | R/I | Load Vector Register |
 | **0x61** | `VSTORE` | R/S | Store Vector Register |
-| **0x62** | `VADD` | R | Vector SIMD Addition |
-| **0x63** | `VMUL` | R | Vector SIMD Multiplication |
-| **0x64** | `VFMA` | R | Vector Fused Multiply-Add |
-| **0x65** | `VPERM` | R | Vector Element Permute |
+| **0x62** | `VADD` | R | Vector SIMD Addition (funct9[8]=mask) |
+| **0x63** | `VMUL` | R | Vector SIMD Multiplication (funct9[8]=mask) |
+| **0x64** | `VFMA` | R | Vector Fused Multiply-Add (funct9[8]=mask) |
+| **0x65** | `VPERM` | R | Vector Element Permute (funct9[8]=mask) |
 | **0x54** | `VCMP.GT` | R | Vector Compare Greater Than |
 
 ---
@@ -167,8 +167,13 @@ AURORA-X employs a **Weakly Ordered Memory Model**. Load/Store operations can be
 - `FENCE.RW` / `FENCE.SEQ`: Strict memory synchronization barrier.
 - **Acquire/Release:** `LOAD.ACQ` and `STORE.REL` instructions ensure memory fence semantics.
 
+### Integer Division Behavior
+- **Division-by-Zero:** In integer division (`DIV`), if the divisor register is zero, the division does not trigger a hardware exception. Instead, it returns `0` to the destination register (consistent with RISC-V conventions).
+- **Signed vs Unsigned:** Integer division behaves as unsigned division.
+
 ### Vector Execution (AX-Vec)
-Vector operations execute across 32 registers (`V0-V31`). Vector length is configured via the `AX_VEC_CONTROL` register. The vector ALU executes arithmetic, logic, and permutation (`VPERM`) operations using element-wise vector masking if the mask bit (funct9[8]) is set.
+Vector operations execute across 32 registers (`V0-V31`). Vector length is configured via the `AX_VEC_CONTROL` register. The vector ALU executes arithmetic, logic, and permutation (`VPERM`) operations.
+- **Vector Masking:** If the mask bit (`funct9[8]`, bit 8 of `funct9` in vector opcode format) is set, operations behave as masked vector instructions (e.g. `VADD.M`, `VMUL.M`, `VFMA.M`, `VPERM.M`). In this mode, each element `i` is processed only if the bit `i` in the `vmask` register (derived from comparison instructions like `VCMP.GT`) is set.
 
 ### Neural Processing Unit (AX-NPU)
 The NPU handles matrix arithmetic and tensor layer activations:

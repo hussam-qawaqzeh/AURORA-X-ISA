@@ -59,6 +59,7 @@ module ax_bus_scalable (
 );
 
     reg [31:0] current_master; // Index of the currently granted master
+    reg [31:0] last_granted_master;
     reg serving;
 
     // Combinational routing wires
@@ -80,11 +81,16 @@ module ax_bus_scalable (
 
     integer i;
     integer j;
+    integer idx;
+    integer idx_c;
+    reg found;
+    reg found_c;
 
-    // Arbitration logic (Simple Priority / Round Robin)
+    // Arbitration logic (Round Robin)
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             current_master <= 0;
+            last_granted_master <= 0;
             serving <= 0;
         end else begin
             if (serving) begin
@@ -92,13 +98,18 @@ module ax_bus_scalable (
                     serving <= 0; // Transaction finished
                 end
             end else begin
-                // Priority arbiter (Core 0 has highest priority)
-                // In a real design, this would be Round-Robin.
                 serving <= 0;
-                for (i = `TOTAL_CORES-1; i >= 0; i = i - 1) begin
-                    if (m_req[i]) begin
-                        current_master <= i;
+                found = 0;
+                for (i = 1; i <= `TOTAL_CORES; i = i + 1) begin
+                    idx = last_granted_master + i;
+                    if (idx >= `TOTAL_CORES) begin
+                        idx = idx - `TOTAL_CORES;
+                    end
+                    if (m_req[idx] && !found) begin
+                        current_master <= idx;
+                        last_granted_master <= idx;
                         serving <= 1;
+                        found = 1;
                     end
                 end
             end
@@ -110,9 +121,15 @@ module ax_bus_scalable (
             grant_idx_comb = current_master;
         end else begin
             grant_idx_comb = 0;
-            for (j = `TOTAL_CORES-1; j >= 0; j = j - 1) begin
-                if (m_req[j]) begin
-                    grant_idx_comb = j;
+            found_c = 0;
+            for (j = 1; j <= `TOTAL_CORES; j = j + 1) begin
+                idx_c = last_granted_master + j;
+                if (idx_c >= `TOTAL_CORES) begin
+                    idx_c = idx_c - `TOTAL_CORES;
+                end
+                if (m_req[idx_c] && !found_c) begin
+                    grant_idx_comb = idx_c;
+                    found_c = 1;
                 end
             end
         end

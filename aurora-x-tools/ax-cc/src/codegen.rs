@@ -11,6 +11,7 @@ enum Inst {
     Xor(u8, u8, u8),
     And(u8, u8, u8),
     Or(u8, u8, u8),
+    Shl(u8, u8, u8),
     Shr(u8, u8, u8),
     Slt(u8, u8, u8),
     Sltu(u8, u8, u8),
@@ -181,12 +182,48 @@ impl CodeGen {
         }
     }
 
+    fn emit_load_u32(&self, asm: &mut Vec<Inst>, r: u8, val: u32, temp_idx: u8) {
+        if val < 8192 {
+            asm.push(Inst::Addi(r, 0, val as i32));
+        } else {
+            let high = val >> 12;
+            let low = val & 0xFFF;
+            let next_temp_idx = temp_idx + 1;
+            
+            // Load high into r
+            self.emit_load_u32(asm, r, high, next_temp_idx);
+            
+            // Load shift amount 12 into a temp register
+            let r_shift = 25 + next_temp_idx;
+            if r_shift > 30 { panic!("Out of temp registers during constant loading!"); }
+            asm.push(Inst::Addi(r_shift, 0, 12));
+            
+            // Shift left
+            asm.push(Inst::Shl(r, r, r_shift));
+            
+            // Add low part if not zero
+            if low != 0 {
+                asm.push(Inst::Addi(r_shift, 0, low as i32));
+                asm.push(Inst::Add(r, r, r_shift));
+            }
+        }
+    }
+
     fn gen_expr(&mut self, expr: &Expression, asm: &mut Vec<Inst>, temp_idx: u8) -> u8 {
         match expr {
             Expression::Number(n) => {
                 let r = 25 + temp_idx; // Temp register starts at 25
                 if r > 30 { panic!("Out of temp registers!"); } // R31 is reserved for local scratch
-                asm.push(Inst::Addi(r, 0, *n));
+                let val = *n;
+                if val >= -8192 && val <= 8191 {
+                    asm.push(Inst::Addi(r, 0, val));
+                } else if val < 0 {
+                    let abs_val = (-val) as u32;
+                    self.emit_load_u32(asm, r, abs_val, temp_idx);
+                    asm.push(Inst::Sub(r, 0, r)); // Negate: r = R0 - r
+                } else {
+                    self.emit_load_u32(asm, r, val as u32, temp_idx);
+                }
                 r
             }
             Expression::Variable(name) => {
@@ -354,6 +391,10 @@ impl CodeGen {
                 }
                 Inst::Or(rd, rs1, rs2) => {
                     resolved.push_str(&format!("    OR R{}, R{}, R{}\n", rd, rs1, rs2));
+                    pc += 1;
+                }
+                Inst::Shl(rd, rs1, rs2) => {
+                    resolved.push_str(&format!("    SHL R{}, R{}, R{}\n", rd, rs1, rs2));
                     pc += 1;
                 }
                 Inst::Shr(rd, rs1, rs2) => {

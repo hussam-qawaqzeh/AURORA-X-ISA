@@ -67,6 +67,8 @@ fn disassemble(inst: u32, _pc: usize) -> String {
         0x45 => {
             format!("EXRET")
         }
+        0x50 => format!("FADD.X R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2),
+        0x51 => format!("FMUL.X R{}, R{}, R{}", dec.rd, dec.rs1, dec.rs2),
         0x54 => {
             format!("VCMP.GT V{}, V{}", dec.rs1, dec.rs2)
         }
@@ -78,16 +80,20 @@ fn disassemble(inst: u32, _pc: usize) -> String {
             format!("VSTORE V{}, [R{}{}]", dec.rs1, dec.rd, if dec.imm14 != 0 { format!("{:+}", dec.imm14) } else { "".to_string() })
         }
         0x62 => {
-            format!("VADD V{}, V{}, V{}", dec.rd, dec.rs1, dec.rs2)
+            let masked = (inst & 0x100) != 0;
+            format!("VADD{} V{}, V{}, V{}", if masked { ".M" } else { "" }, dec.rd, dec.rs1, dec.rs2)
         }
         0x63 => {
-            format!("VMUL V{}, V{}, V{}", dec.rd, dec.rs1, dec.rs2)
+            let masked = (inst & 0x100) != 0;
+            format!("VMUL{} V{}, V{}, V{}", if masked { ".M" } else { "" }, dec.rd, dec.rs1, dec.rs2)
         }
         0x64 => {
-            format!("VFMA V{}, V{}, V{}", dec.rd, dec.rs1, dec.rs2)
+            let masked = (inst & 0x100) != 0;
+            format!("VFMA{} V{}, V{}, V{}", if masked { ".M" } else { "" }, dec.rd, dec.rs1, dec.rs2)
         }
         0x65 => {
-            format!("VPERM V{}, V{}, V{}", dec.rd, dec.rs1, dec.rs2)
+            let masked = (inst & 0x100) != 0;
+            format!("VPERM{} V{}, V{}, V{}", if masked { ".M" } else { "" }, dec.rd, dec.rs1, dec.rs2)
         }
         _ => format!(".WORD 0x{:08X}", inst),
     }

@@ -1,5 +1,6 @@
 module vector_register_file (
     input  wire          clk,
+    input  wire          rst_n,
     input  wire          we,
     input  wire          mask_we,
     input  wire          use_mask,
@@ -23,23 +24,24 @@ module vector_register_file (
     reg [63:0] vmask [0:1];
 
     integer i;
-    initial begin
-        vmask[0] = 64'hFFFFFFFFFFFFFFFF;
-        vmask[1] = 64'hFFFFFFFFFFFFFFFF;
-        for (i = 0; i < 64; i = i + 1) begin
-            vr[i] = 2048'd0;
-        end
-    end
 
-    // Write Port (Synchronous)
-    always @(posedge clk) begin
-        if (mask_we) begin
-            vmask[thread_id_write] <= mask_data;
-        end
-        if (we) begin
+    // Write Port (Synchronous with Async Reset)
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            vmask[0] <= 64'hFFFFFFFFFFFFFFFF;
+            vmask[1] <= 64'hFFFFFFFFFFFFFFFF;
             for (i = 0; i < 64; i = i + 1) begin
-                if (!use_mask || vmask[thread_id_write][i]) begin
-                    vr[{thread_id_write, rd_write}][i*32 +: 32] <= write_data[i*32 +: 32];
+                vr[i] <= 2048'd0;
+            end
+        end else begin
+            if (mask_we) begin
+                vmask[thread_id_write] <= mask_data;
+            end
+            if (we) begin
+                for (i = 0; i < 64; i = i + 1) begin
+                    if (!use_mask || vmask[thread_id_write][i]) begin
+                        vr[{thread_id_write, rd_write}][i*32 +: 32] <= write_data[i*32 +: 32];
+                    end
                 end
             end
         end

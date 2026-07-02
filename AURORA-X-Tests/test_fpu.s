@@ -1,0 +1,33 @@
+; Compliance Test: FPU Scalar Operations (FADD.X, FMUL.X)
+
+; Construct 1.0 (0x3FF0000000000000)
+ADDI R1, R0, 1023
+ADDI R2, R0, 52
+SHL R1, R1, R2
+
+; Construct 2.0 (0x4000000000000000)
+ADDI R3, R0, 1024
+SHL R3, R3, R2
+
+; Construct 3.0 (0x4008000000000000)
+ADDI R5, R0, 1024
+SHL R5, R5, R2
+ADDI R6, R0, 8
+ADDI R7, R0, 48
+SHL R6, R6, R7
+ADD.X R5, R5, R6
+
+; 1. Test FADD.X: 1.0 + 2.0 = 3.0
+FADD.X R4, R1, R3
+BRANCH.X R4, R5, 2
+JUMP.X R0, 0          ; Fail if R4 != 3.0
+
+; 2. Test FMUL.X: 1.0 * 2.0 = 2.0
+FMUL.X R8, R1, R3
+BRANCH.X R8, R3, 2
+JUMP.X R0, 0          ; Fail if R8 != 2.0
+
+; Success
+ADDI R30, R0, 1
+CSR.WRITE R30, 0x700
+JUMP.X R0, 0

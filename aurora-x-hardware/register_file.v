@@ -1,5 +1,6 @@
 module register_file (
     input  wire        clk,
+    input  wire        rst_n,
     input  wire        we,
     input  wire [4:0]  rs1,
     input  wire [4:0]  rs2,
@@ -14,17 +15,14 @@ module register_file (
     // 64 General Purpose Registers (32 per thread), 64-bits each
     reg [63:0] registers [0:63];
 
-    // Initialize all registers to 0 (important for simulation)
+    // Write Port (Synchronous with Async Reset)
     integer i;
-    initial begin
-        for (i = 0; i < 64; i = i + 1) begin
-            registers[i] = 64'd0;
-        end
-    end
-
-    // Write Port (Synchronous)
-    always @(posedge clk) begin
-        if (we && rd != 5'd0) begin
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (i = 0; i < 64; i = i + 1) begin
+                registers[i] <= 64'd0;
+            end
+        end else if (we && rd != 5'd0) begin
             registers[{thread_id_write, rd}] <= write_data;
         end
     end

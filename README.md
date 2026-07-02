@@ -11,10 +11,7 @@ The project is **fully verified and stable**, establishing a complete, conflict-
 AURORA-X is a clean-slate, 32-bit fixed-length instruction architecture with a massive focus on **Vectorized Math (SIMD)** and **Neural Network Inference**. It is built from the ground up to eliminate legacy bloat while providing unparalleled throughput for modern computational workloads.
 
 ### Features
-1. **Heterogeneous Multi-Core Target:** Fully configured 9-core SoC target consisting of:
-   - **3 P-Cores** (Performance)
-   - **3 E-Cores** (Efficiency)
-   - **3 AG-Cores** (AI & Vector Acceleration)
+1. **Heterogeneous Multi-Core Configuration:** The architecture is designed to scale to a 9-core cluster (3 P-Cores, 3 E-Cores, and 3 AG-Cores). The current synthesizable RTL and simulation testbench configure a dual-core SoC to verify MESI coherency.
 2. **64-bit Scalar Execution:** 32x 64-bit General Purpose Registers (`R0-R31`), where `R0` is hardwired to zero.
 3. **AX-Vec (Vector Extension):** 32x 2048-bit Vector Registers (`V0-V31`) with a hardware-agnostic vector length configuration and vector element masking.
 4. **AI Tensor Math:** Native hardware support for Fused Multiply-Add (`VFMA`) and Vector Permutation (`VPERM`).

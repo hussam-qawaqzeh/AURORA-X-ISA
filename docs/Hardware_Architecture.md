@@ -10,7 +10,7 @@ AURORA-X is implemented as a dual-core SoC with a hierarchical memory subsystem,
 
 ### SoC Architecture Diagram
 
-![AURORA-X Dual-Core SoC Block Diagram](file:///C:/Users/hussam/.gemini/antigravity/brain/7fc005ba-1a72-4b47-b954-63948c5305d7/soc_architecture_1782388102321.png)
+![AURORA-X Dual-Core SoC Block Diagram](images/soc_architecture_1782388102321.png)
 
 ### Key SoC Features
 - **Processor Cores:** Two symmetric, 5-stage pipelined execution cores (`Core 0` and `Core 1`).
@@ -27,7 +27,7 @@ The heart of the processor is a high-frequency **5-Stage Pipelined Processor Cor
 
 ### Pipeline Stage Diagram
 
-![AURORA-X 5-Stage Pipeline Core Diagram](file:///C:/Users/hussam/.gemini/antigravity/brain/7fc005ba-1a72-4b47-b954-63948c5305d7/pipeline_stages_1782388119412.png)
+![AURORA-X 5-Stage Pipeline Core Diagram](images/pipeline_stages_1782388119412.png)
 
 ### Pipeline Stages
 1. **Instruction Fetch (IF):**
